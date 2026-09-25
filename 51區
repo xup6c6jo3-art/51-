@@ -1,0 +1,97 @@
+-- Roblox LocalScript - 傳送功能面板
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+
+-- 定義所有傳送點座標 Vector3
+local teleportLocations = {
+    ["大廳"] = Vector3.new(623.77, 1151.38, 749.5),
+    ["垃圾場"] = Vector3.new(-581.91, 1082.10, 1088.26),
+    ["工廠起始點"] = Vector3.new(-394.88, 1062.00, 1049.73),
+    ["工廠終點"] = Vector3.new(-352.74, 1073.00, 411.19),
+    ["白色點"] = Vector3.new(-13.57, 863.00, -44.30),
+    ["火山"] = Vector3.new(-600.40, 953.00, 154.01),
+    ["黑色傳送點"] = Vector3.new(2401.27, 1150.00, 133.31),
+    ["黑色拿到點"] = Vector3.new(2238.54, 1151.00, 56.61),
+    ["焚化爐起始點"] = Vector3.new(-397.77, 1062.00, 1157.77),
+    ["焚化爐按鈕點"] = Vector3.new(-18.64, 1058.01, 1157.36),
+    ["焚化爐拿到點"] = Vector3.new(62.42, 1062.00, 1158.05),
+    ["水牆第一開啟點"] = Vector3.new(-279.73, 971.10, -92.11),
+    ["水牆第二開啟點"] = Vector3.new(-442.93, 971.10, -195.99),
+    ["水牆最後點"] = Vector3.new(-362.94, 954.83, -57.92),
+    ["雙槍終點"] = Vector3.new(71.21, 1108.61, 1949.26)
+}
+
+-- 傳送函式
+local function teleportTo(position)
+    local char = player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.CFrame = CFrame.new(position)
+    end
+end
+
+-- 建立 UI 主介面
+local playerGui = player:WaitForChild("PlayerGui")
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TeleportGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- 主面板 (滾動區域以容納眾多按鈕)
+local mainFrame = Instance.new("ScrollingFrame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 220, 0, 380)
+mainFrame.Position = UDim2.new(0.02, 0, 0.2, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true -- 可拖曳
+mainFrame.CanvasSize = UDim2.new(0, 0, 0, 0) -- 自動動態調整
+mainFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+mainFrame.Parent = screenGui
+
+-- 標題列
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 35)
+titleLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+titleLabel.Text = "位置傳送選單"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 16
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.Parent = mainFrame
+
+-- UI 佈局 (自動推疊按鈕)
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Parent = mainFrame
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListLayout.Padding = UDim.new(0, 5)
+
+local uiPadding = Instance.new("UIPadding")
+uiPadding.Parent = mainFrame
+uiPadding.PaddingTop = UDim.new(0, 40)
+uiPadding.PaddingLeft = UDim.new(0, 10)
+uiPadding.PaddingRight = UDim.new(0, 10)
+uiPadding.PaddingBottom = UDim.new(0, 10)
+
+-- 動態生成所有傳送按鈕
+for name, targetPos in pairs(teleportLocations) do
+    local btn = Instance.new("TextButton")
+    btn.Name = name .. "Btn"
+    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 120, 210)
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 14
+    btn.Font = Enum.Font.SourceSans
+    btn.Parent = mainFrame
+
+    -- 按鈕圓角修飾
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 6)
+    uiCorner.Parent = btn
+
+    -- 點擊事件
+    btn.MouseButton1Click:Connect(function()
+        teleportTo(targetPos)
+    end)
+end

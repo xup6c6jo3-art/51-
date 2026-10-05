@@ -1,68 +1,79 @@
-local ScreenGui = Instance.new("ScreenGui")
-local MainFrame = Instance.new("Frame")
-local Title = Instance.new("TextLabel")
-local Scroll = Instance.new("ScrollingFrame")
-local UIListLayout = Instance.new("UIListLayout")
-local ToggleBtn = Instance.new("TextButton")
+-- 1. 清除舊的 UI 防止重複執行
+local oldGui = game.CoreGui:FindFirstChild("Area51TeleportGui")
+if oldGui then oldGui:Destroy() end
 
+-- 2. 建立新 UI 容器
+local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Area51TeleportGui"
-ScreenGui.Parent = game.CoreGui or game.Players.LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.Parent = game.CoreGui
 ScreenGui.ResetOnSpawn = false
 
--- 主視窗
+-- 3. 主視窗
+local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
-MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
 MainFrame.Size = UDim2.new(0, 220, 0, 320)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
--- 標題
+-- 標題列
+local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
 Title.Size = UDim2.new(1, 0, 0, 30)
-Title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-Title.Text = "51區 座標傳送"
+Title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+Title.Text = "51區 座標傳送 (穩健版)"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 16
+Title.TextSize = 15
 
 -- 滾動區域
+local Scroll = Instance.new("ScrollingFrame")
 Scroll.Parent = MainFrame
 Scroll.Position = UDim2.new(0, 5, 0, 35)
 Scroll.Size = UDim2.new(1, -10, 1, -40)
 Scroll.BackgroundTransparency = 1
 Scroll.CanvasSize = UDim2.new(0, 0, 0, 520)
+Scroll.ScrollBarThickness = 6
 
+local UIListLayout = Instance.new("UIListLayout")
 UIListLayout.Parent = Scroll
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim me or UDim.new(0, 5)
+UIListLayout.Padding = UDim.new(0, 5)
 
--- 傳送核心邏輯
+-- 強效傳送邏輯 (具備防空與角色檢測)
 local function tp(x, y, z)
-    local char = game.Players.LocalPlayer.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
+    local player = game.Players.LocalPlayer
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 2)
+    
+    if hrp then
+        hrp.CFrame = CFrame.new(x, y, z)
+    else
+        warn("找不到角色座標節點 HumanoidRootPart！")
     end
 end
 
--- 按鈕建立函式
+-- 按鈕生成器
 local function createBtn(text, x, y, z)
     local btn = Instance.new("TextButton")
     btn.Parent = Scroll
     btn.Size = UDim2.new(1, -10, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    btn.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 14
-    btn.MouseButton1Click:Connect(function()
+    btn.TextSize = 13
+    
+    -- 同時支援 MouseButton1Click 與 Activated 確保相容性
+    btn.Activated:Connect(function()
         tp(x, y, z)
     end)
 end
 
--- 所有座標清單
+-- 載入所有 51區 座標點
 createBtn("🏠 大廳", 623.77, 1151.38, 749.58)
-createBtn("🗑️ 垃圾", -581.91, 1082.10, 1088.26)
-createBtn("⚪ 白色", -13.57, 863.00, -44.30)
+createBtn("🗑️ 垃圾點", -581.91, 1082.10, 1088.26)
+createBtn("⚪ 白色點", -13.57, 863.00, -44.30)
 createBtn("🌋 火山", -600.40, 953.00, 154.01)
 createBtn("🏭 工廠 - 起始點", -394.88, 1062.00, 1049.73)
 createBtn("🏭 工廠 - 終點", -352.74, 1073.00, 411.19)

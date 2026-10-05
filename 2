@@ -1,88 +1,126 @@
--- 1. 清除舊的 UI 防止重複執行
-local oldGui = game.CoreGui:FindFirstChild("Area51TeleportGui")
-if oldGui then oldGui:Destroy() end
+-- 清除舊版 UI
+local Player = game:GetService("Players").LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local TargetParent = CoreGui or Player:WaitForChild("PlayerGui")
 
--- 2. 建立新 UI 容器
+if TargetParent:FindFirstChild("Area51TP_GUI_V2") then
+    TargetParent.Area51TP_GUI_V2:Destroy()
+end
+
+-- 建立主介面
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Area51TeleportGui"
-ScreenGui.Parent = game.CoreGui
+ScreenGui.Name = "Area51TP_GUI_V2"
+ScreenGui.Parent = TargetParent
 ScreenGui.ResetOnSpawn = false
 
--- 3. 主視窗
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
-MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-MainFrame.Size = UDim2.new(0, 220, 0, 320)
+MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
+MainFrame.Size = UDim2.new(0, 260, 0, 420)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
--- 標題列
+-- 標題欄
 local Title = Instance.new("TextLabel")
 Title.Parent = MainFrame
-Title.Size = UDim2.new(1, 0, 0, 30)
-Title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-Title.Text = "51區 座標傳送 (穩健版)"
+Title.Size = UDim2.new(1, 0, 0, 36)
+Title.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+Title.BorderSizePixel = 0
+Title.Text = "51區 座標傳送控制台"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 15
+Title.TextSize = 16
+Title.Font = Enum.Font.SourceSansBold
 
--- 滾動區域
+-- 滾動清單
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Parent = MainFrame
-Scroll.Position = UDim2.new(0, 5, 0, 35)
-Scroll.Size = UDim2.new(1, -10, 1, -40)
+Scroll.Position = UDim2.new(0, 5, 0, 40)
+Scroll.Size = UDim2.new(1, -10, 1, -45)
 Scroll.BackgroundTransparency = 1
-Scroll.CanvasSize = UDim2.new(0, 0, 0, 520)
+Scroll.BorderSizePixel = 0
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 1050)
 Scroll.ScrollBarThickness = 6
 
 local UIListLayout = Instance.new("UIListLayout")
 UIListLayout.Parent = Scroll
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 5)
+UIListLayout.Padding = UDim.new(0, 4)
 
--- 強效傳送邏輯 (具備防空與角色檢測)
+-- 傳送核心函式
 local function tp(x, y, z)
-    local player = game.Players.LocalPlayer
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 2)
-    
-    if hrp then
-        hrp.CFrame = CFrame.new(x, y, z)
-    else
-        warn("找不到角色座標節點 HumanoidRootPart！")
+    local char = Player.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
     end
 end
 
--- 按鈕生成器
+-- 建立分類標題標籤
+local function createHeader(text)
+    local header = Instance.new("TextLabel")
+    header.Parent = Scroll
+    header.Size = UDim2.new(1, -8, 0, 26)
+    header.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    header.BorderSizePixel = 0
+    header.Text = "  " .. text
+    header.TextColor3 = Color3.fromRGB(255, 215, 0)
+    header.TextSize = 14
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Font = Enum.Font.SourceSansBold
+end
+
+-- 建立傳送按鈕
 local function createBtn(text, x, y, z)
     local btn = Instance.new("TextButton")
     btn.Parent = Scroll
-    btn.Size = UDim2.new(1, -10, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    btn.Size = UDim2.new(1, -8, 0, 30)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    btn.BorderSizePixel = 0
     btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
     btn.TextSize = 13
-    
-    -- 同時支援 MouseButton1Click 與 Activated 確保相容性
-    btn.Activated:Connect(function()
+    btn.Font = Enum.Font.SourceSans
+    btn.MouseButton1Click:Connect(function()
         tp(x, y, z)
     end)
 end
 
--- 載入所有 51區 座標點
+----------------【 1. 主要區域 (反偵測) 】----------------
+createHeader("📍 主要區域 (反偵測)")
+createBtn("🌀 傳送門", -106, 998, 834)
 createBtn("🏠 大廳", 623.77, 1151.38, 749.58)
-createBtn("🗑️ 垃圾點", -581.91, 1082.10, 1088.26)
-createBtn("⚪ 白色點", -13.57, 863.00, -44.30)
+createBtn("🛡️ 反偵測 - 左房間", 381.25, 982.00, 811.97)
+createBtn("🛡️ 反偵測 - 右房間", 382.65, 982.00, 574.40)
+
+----------------【 2. 隨時可拿區域 】----------------
+createHeader("⏰ 隨時可拿區域")
+createBtn("🚀 紅色飛彈 - 始點", -394.88, 1062.00, 1049.73)
+createBtn("🚀 紅色飛彈 - 終點", -352.74, 1073.00, 411.19)
+createBtn("❄️ 冰 Cross", 242.86, 688.00, 943.76)
 createBtn("🌋 火山", -600.40, 953.00, 154.01)
-createBtn("🏭 工廠 - 起始點", -394.88, 1062.00, 1049.73)
-createBtn("🏭 工廠 - 終點", -352.74, 1073.00, 411.19)
-createBtn("🔥 焚化爐 - 起始點", -397.77, 1062.00, 1157.77)
-createBtn("🔥 焚化爐 - 按鈕點(最後)", -18.64, 1058.01, 1157.36)
-createBtn("🔥 焚化爐 - 拿到點", 62.42, 1062.00, 1158.05)
-createBtn("⬛ 黑色 - 傳送點", 2401.27, 1150.00, 133.31)
-createBtn("⬛ 黑色 - 拿到點", 2238.54, 1151.00, 56.61)
-createBtn("💧 水牆 - 第一開啟點", -279.73, 971.10, -92.11)
-createBtn("💧 水牆 - 第二開啟點", -442.93, 971.10, -195.99)
-createBtn("💧 水牆 - 最後那道", -362.94, 954.83, -57.92)
-createBtn("🔫 雙槍終點", 71.21, 1108.61, 1949.26)
+createBtn("🗑️ hex 垃圾", -581.91, 1082.10, 1088.26)
+createBtn("🚆 LXW 列車", -13.57, 863.00, -44.30)
+createBtn("💧 水槍 - 第一開啟點", -279.73, 971.10, -92.11)
+createBtn("💧 水槍 - 第二開啟點", -442.93, 971.10, -195.99)
+createBtn("💧 水槍 - 最後那道", -362.94, 954.83, -57.92)
+createBtn("⚔️ 燃燒劍 - 起始點", -319.00, 1062.00, 1159.26)
+createBtn("⚔️️ 燃燒劍 - 按鈕點", -19.16, 1053.32, 1159.63)
+createBtn("⚔️ 燃燒劍 - 拿到點", 62.42, 1062.00, 1158.05)
+
+----------------【 3. 傳送門的 】----------------
+createHeader("🌀 傳送門類別")
+createBtn("🔫 腐化步槍 - 傳送點", -2667.16, 960.00, -432.37)
+createBtn("🔫 腐化步槍 - 終點", -2103.5, 944.2, -431.5)
+createBtn("🔇 靜音", 948.59, 850.00, -1027.96)
+createBtn("🛡️ 靜音 - 無敵幫人點", 948.73, 836.12, -683.84)
+createBtn("🎁 靜音 - 拿到點", 950.16, 859.89, -616.36)
+createBtn("🌈 RGB - 傳送點", -1077.01, 998.00, 786.96)
+createBtn("🌈 RGB - 終點", -1366.5, 1064.2, 984.5)
+createBtn("⬛ LXD(黑色) - 傳送點", 2401.27, 1150.00, 133.31)
+createBtn("⬛ LXD(黑色) - 拿到點", 2238.54, 1151.00, 56.61)
+createBtn("🔫 雙槍 - 起點1", 253.29, 1099.08, 2185.83)
+createBtn("🔫 雙槍 - 終點", 71.21, 1108.61, 1949.26)
+
+print("51區座標 UI V2 載入完畢！")

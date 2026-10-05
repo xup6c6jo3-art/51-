@@ -1,141 +1,77 @@
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local Scroll = Instance.new("ScrollingFrame")
+local UIListLayout = Instance.new("UIListLayout")
+local ToggleBtn = Instance.new("TextButton")
 
-local Window = Rayfield:CreateWindow({
-   Name = "51區 座標傳送 UI",
-   LoadingTitle = "載入中...",
-   LoadingSubtitle = "by Assistant",
-   ConfigurationSaving = {
-      Enabled = false
-   }
-})
+ScreenGui.Name = "Area51TeleportGui"
+ScreenGui.Parent = game.CoreGui or game.Players.LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
 
-local Tab = Window:CreateTab("座標傳送", 4483362458) -- 頁籤圖示
+-- 主視窗
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 220, 0, 320)
+MainFrame.Active = true
+MainFrame.Draggable = true
 
--- 傳送核心函式
-local function TeleportTo(x, y, z)
-    local player = game.Players.LocalPlayer
-    if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-        player.Character.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
+-- 標題
+Title.Parent = MainFrame
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+Title.Text = "51區 座標傳送"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 16
+
+-- 滾動區域
+Scroll.Parent = MainFrame
+Scroll.Position = UDim2.new(0, 5, 0, 35)
+Scroll.Size = UDim2.new(1, -10, 1, -40)
+Scroll.BackgroundTransparency = 1
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 520)
+
+UIListLayout.Parent = Scroll
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim me or UDim.new(0, 5)
+
+-- 傳送核心邏輯
+local function tp(x, y, z)
+    local char = game.Players.LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        char.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
     end
 end
 
--- 通用地點
-Tab:CreateSection("通用地點")
+-- 按鈕建立函式
+local function createBtn(text, x, y, z)
+    local btn = Instance.new("TextButton")
+    btn.Parent = Scroll
+    btn.Size = UDim2.new(1, -10, 0, 30)
+    btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 14
+    btn.MouseButton1Click:Connect(function()
+        tp(x, y, z)
+    end)
+end
 
-Tab:CreateButton({
-   Name = "🏠 大廳",
-   Callback = function()
-       TeleportTo(623.77, 1151.38, 749.58)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🗑️ 垃圾點",
-   Callback = function()
-       TeleportTo(-581.91, 1082.10, 1088.26)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "⚪ 白色點",
-   Callback = function()
-       TeleportTo(-13.57, 863.00, -44.30)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🌋 火山",
-   Callback = function()
-       TeleportTo(-600.40, 953.00, 154.01)
-   end,
-})
-
--- 工廠與焚化爐
-Tab:CreateSection("工廠 & 焚化爐")
-
-Tab:CreateButton({
-   Name = "🏭 工廠 - 起始點",
-   Callback = function()
-       TeleportTo(-394.88, 1062.00, 1049.73)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🏭 工廠 - 終點",
-   Callback = function()
-       TeleportTo(-352.74, 1073.00, 411.19)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🔥 焚化爐 - 起始點",
-   Callback = function()
-       TeleportTo(-397.77, 1062.00, 1157.77)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🔥 焚化爐 - 按鈕點 (最後)",
-   Callback = function()
-       TeleportTo(-18.64, 1058.01, 1157.36)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🔥 焚化爐 - 拿到點",
-   Callback = function()
-       TeleportTo(62Results, 1062.00, 1158.05)
-   end,
-})
-
--- 黑色點 & 水牆 & 武器
-Tab:CreateSection("特殊機制 & 武器")
-
-Tab:CreateButton({
-   Name = "⬛ 黑色 - 傳送點",
-   Callback = function()
-       TeleportTo(2401.27, 1150.00, 133.31)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "⬛ 黑色 - 拿到點",
-   Callback = function()
-       TeleportTo(2238.54, 1151.00, 56.61)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "💧 水牆 - 第一開啟點",
-   Callback = function()
-       TeleportTo(-279.73, 971.10, -92.11)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "💧 水牆 - 第二開啟點",
-   Callback = function()
-       TeleportTo(-442.93, 971.10, -195.99)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "💧 水牆 - 最後那道",
-   Callback = function()
-       TeleportTo(-362.94, 954.83, -57.92)
-   end,
-})
-
-Tab:CreateButton({
-   Name = "🔫 雙槍終點",
-   Callback = function()
-       TeleportTo(71.21, 1108.61, 1949.26)
-   end,
-})
-
-Rayfield:Notify({
-   Title = "腳本載入完成",
-   Content = "所有 51 區傳送座標已成功載入！",
-   Duration = 5,
-   Image = 4483362458,
-})
+-- 所有座標清單
+createBtn("🏠 大廳", 623.77, 1151.38, 749.58)
+createBtn("🗑️ 垃圾", -581.91, 1082.10, 1088.26)
+createBtn("⚪ 白色", -13.57, 863.00, -44.30)
+createBtn("🌋 火山", -600.40, 953.00, 154.01)
+createBtn("🏭 工廠 - 起始點", -394.88, 1062.00, 1049.73)
+createBtn("🏭 工廠 - 終點", -352.74, 1073.00, 411.19)
+createBtn("🔥 焚化爐 - 起始點", -397.77, 1062.00, 1157.77)
+createBtn("🔥 焚化爐 - 按鈕點(最後)", -18.64, 1058.01, 1157.36)
+createBtn("🔥 焚化爐 - 拿到點", 62.42, 1062.00, 1158.05)
+createBtn("⬛ 黑色 - 傳送點", 2401.27, 1150.00, 133.31)
+createBtn("⬛ 黑色 - 拿到點", 2238.54, 1151.00, 56.61)
+createBtn("💧 水牆 - 第一開啟點", -279.73, 971.10, -92.11)
+createBtn("💧 水牆 - 第二開啟點", -442.93, 971.10, -195.99)
+createBtn("💧 水牆 - 最後那道", -362.94, 954.83, -57.92)
+createBtn("🔫 雙槍終點", 71.21, 1108.61, 1949.26)

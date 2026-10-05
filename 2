@@ -1,0 +1,141 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "51區 座標傳送 UI",
+   LoadingTitle = "載入中...",
+   LoadingSubtitle = "by Assistant",
+   ConfigurationSaving = {
+      Enabled = false
+   }
+})
+
+local Tab = Window:CreateTab("座標傳送", 4483362458) -- 頁籤圖示
+
+-- 傳送核心函式
+local function TeleportTo(x, y, z)
+    local player = game.Players.LocalPlayer
+    if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        player.Character.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
+    end
+end
+
+-- 通用地點
+Tab:CreateSection("通用地點")
+
+Tab:CreateButton({
+   Name = "🏠 大廳",
+   Callback = function()
+       TeleportTo(623.77, 1151.38, 749.58)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🗑️ 垃圾點",
+   Callback = function()
+       TeleportTo(-581.91, 1082.10, 1088.26)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "⚪ 白色點",
+   Callback = function()
+       TeleportTo(-13.57, 863.00, -44.30)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🌋 火山",
+   Callback = function()
+       TeleportTo(-600.40, 953.00, 154.01)
+   end,
+})
+
+-- 工廠與焚化爐
+Tab:CreateSection("工廠 & 焚化爐")
+
+Tab:CreateButton({
+   Name = "🏭 工廠 - 起始點",
+   Callback = function()
+       TeleportTo(-394.88, 1062.00, 1049.73)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🏭 工廠 - 終點",
+   Callback = function()
+       TeleportTo(-352.74, 1073.00, 411.19)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🔥 焚化爐 - 起始點",
+   Callback = function()
+       TeleportTo(-397.77, 1062.00, 1157.77)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🔥 焚化爐 - 按鈕點 (最後)",
+   Callback = function()
+       TeleportTo(-18.64, 1058.01, 1157.36)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🔥 焚化爐 - 拿到點",
+   Callback = function()
+       TeleportTo(62Results, 1062.00, 1158.05)
+   end,
+})
+
+-- 黑色點 & 水牆 & 武器
+Tab:CreateSection("特殊機制 & 武器")
+
+Tab:CreateButton({
+   Name = "⬛ 黑色 - 傳送點",
+   Callback = function()
+       TeleportTo(2401.27, 1150.00, 133.31)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "⬛ 黑色 - 拿到點",
+   Callback = function()
+       TeleportTo(2238.54, 1151.00, 56.61)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "💧 水牆 - 第一開啟點",
+   Callback = function()
+       TeleportTo(-279.73, 971.10, -92.11)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "💧 水牆 - 第二開啟點",
+   Callback = function()
+       TeleportTo(-442.93, 971.10, -195.99)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "💧 水牆 - 最後那道",
+   Callback = function()
+       TeleportTo(-362.94, 954.83, -57.92)
+   end,
+})
+
+Tab:CreateButton({
+   Name = "🔫 雙槍終點",
+   Callback = function()
+       TeleportTo(71.21, 1108.61, 1949.26)
+   end,
+})
+
+Rayfield:Notify({
+   Title = "腳本載入完成",
+   Content = "所有 51 區傳送座標已成功載入！",
+   Duration = 5,
+   Image = 4483362458,
+})

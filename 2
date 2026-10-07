@@ -1,126 +1,232 @@
--- 清除舊版 UI
-local Player = game:GetService("Players").LocalPlayer
-local CoreGui = game:GetService("CoreGui")
-local TargetParent = CoreGui or Player:WaitForChild("PlayerGui")
+-- ====================================================================
+-- [完整腳本] Roblox Monster ESP & Teleport Framework
+-- 說明：包含 UI 繪製、怪物偵測、血量/距離 ESP 與傳送功能。
+-- ====================================================================
 
-if TargetParent:FindFirstChild("Area51TP_GUI_V2") then
-    TargetParent.Area51TP_GUI_V2:Destroy()
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-----------------------------------------------------------------------
+-- 1. 設定檔與目標怪物清單
+-----------------------------------------------------------------------
+local TARGET_MONSTERS = {
+    ["Reaper"] = true,
+    ["Jack O' Lantern"] = true,
+    ["Zombie Brute"] = true
+}
+
+local Config = {
+    TeleportOffsetY = 20, -- 傳送到怪物上方 20 格
+    ESPEnabled = true,   -- 是否預設開啟 ESP (改為 true 代表預設開啟，false 為關閉)
+}
+
+local ActiveESPList = {} -- 儲存當前已建立的 ESP UI 標籤
+local EspButtonRef = nil -- UI 按鈕引用
+
+-----------------------------------------------------------------------
+-- 2. 輔助函式：獲取怪物血量
+-----------------------------------------------------------------------
+local function GetMonsterHealth(monsterModel)
+    local humanoid = monsterModel:FindFirstChildOfClass("Humanoid") 
+        or monsterModel:FindFirstChild("human") 
+        or monsterModel:FindFirstChild("Humanoid")
+    
+    if humanoid then
+        return humanoid.Health, humanoid.MaxHealth
+    end
+    return nil, nil
 end
 
--- 建立主介面
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Area51TP_GUI_V2"
-ScreenGui.Parent = TargetParent
-ScreenGui.ResetOnSpawn = false
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Parent = ScreenGui
-MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
-MainFrame.BorderSizePixel = 0
-MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
-MainFrame.Size = UDim2.new(0, 260, 0, 420)
-MainFrame.Active = true
-MainFrame.Draggable = true
-
--- 標題欄
-local Title = Instance.new("TextLabel")
-Title.Parent = MainFrame
-Title.Size = UDim2.new(1, 0, 0, 36)
-Title.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
-Title.BorderSizePixel = 0
-Title.Text = "51區 座標傳送控制台"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 16
-Title.Font = Enum.Font.SourceSansBold
-
--- 滾動清單
-local Scroll = Instance.new("ScrollingFrame")
-Scroll.Parent = MainFrame
-Scroll.Position = UDim2.new(0, 5, 0, 40)
-Scroll.Size = UDim2.new(1, -10, 1, -45)
-Scroll.BackgroundTransparency = 1
-Scroll.BorderSizePixel = 0
-Scroll.CanvasSize = UDim2.new(0, 0, 0, 1050)
-Scroll.ScrollBarThickness = 6
-
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Parent = Scroll
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 4)
-
--- 傳送核心函式
-local function tp(x, y, z)
-    local char = Player.Character
-    if char and char:FindFirstChild("HumanoidRootPart") then
-        char.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
-    end
+-----------------------------------------------------------------------
+-- 3. 傳送邏輯
+-----------------------------------------------------------------------
+local function TeleportToMonster(monsterModel)
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    
+    local targetPart = monsterModel:FindFirstChild("HumanoidRootPart") 
+        or monsterModel.PrimaryPart 
+        or monsterModel:FindFirstChildWhichIsA("BasePart")
+        
+    if targetPart then
+        character.HumanoidRootPart.CFrame = targetPart.CFrame + Vector3.new(0, Config.TeleportOffsetY, 0)
+        print("[TP Success] 已傳送到怪物上方 20 格: " .. monsterModel.Name)
+    end
 end
 
--- 建立分類標題標籤
-local function createHeader(text)
-    local header = Instance.new("TextLabel")
-    header.Parent = Scroll
-    header.Size = UDim2.new(1, -8, 0, 26)
-    header.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-    header.BorderSizePixel = 0
-    header.Text = "  " .. text
-    header.TextColor3 = Color3.fromRGB(255, 215, 0)
-    header.TextSize = 14
-    header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Font = Enum.Font.SourceSansBold
+-----------------------------------------------------------------------
+-- 4. ESP 邏輯：建立、移除與切換
+-----------------------------------------------------------------------
+local function CreateESP(monsterModel)
+    if ActiveESPList[monsterModel] then return end
+
+    local head = monsterModel:FindFirstChild("Head") 
+        or monsterModel:FindFirstChild("HumanoidRootPart") 
+        or monsterModel.PrimaryPart 
+        or monsterModel:FindFirstChildWhichIsA("BasePart")
+        
+    if not head then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "MonsterESP"
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0, 160, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Parent = billboard
+    nameLabel.Size = UDim2.new(1, 0, 1, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+    nameLabel.TextStrokeTransparency = 0 -- 增加黑色描邊，看得更清晰
+    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    nameLabel.TextScaled = true
+    nameLabel.Font = Enum.Font.SourceSansBold
+
+    billboard.Parent = monsterModel
+    ActiveESPList[monsterModel] = billboard
 end
 
--- 建立傳送按鈕
-local function createBtn(text, x, y, z)
-    local btn = Instance.new("TextButton")
-    btn.Parent = Scroll
-    btn.Size = UDim2.new(1, -8, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-    btn.BorderSizePixel = 0
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
-    btn.TextSize = 13
-    btn.Font = Enum.Font.SourceSans
-    btn.MouseButton1Click:Connect(function()
-        tp(x, y, z)
-    end)
+local function RemoveESP(monsterModel)
+    if ActiveESPList[monsterModel] then
+        ActiveESPList[monsterModel]:Destroy()
+        ActiveESPList[monsterModel] = nil
+    end
 end
 
-----------------【 1. 主要區域 (反偵測) 】----------------
-createHeader("📍 主要區域 (反偵測)")
-createBtn("🌀 傳送門", -106, 998, 834)
-createBtn("🏠 大廳", 623.77, 1151.38, 749.58)
-createBtn("🛡️ 反偵測 - 左房間", 381.25, 982.00, 811.97)
-createBtn("🛡️ 反偵測 - 右房間", 382.65, 982.00, 574.40)
+-- ESP 切換控制函式
+local function ToggleESP(enable)
+    Config.ESPEnabled = enable
+    
+    -- 更新 UI 按鈕外觀
+    if EspButtonRef then
+        if Config.ESPEnabled then
+            EspButtonRef.Text = "ESP: 開啟"
+            EspButtonRef.BackgroundColor3 = Color3.fromRGB(50, 180, 50)
+        else
+            EspButtonRef.Text = "ESP: 關閉"
+            EspButtonRef.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+        end
+    end
 
-----------------【 2. 隨時可拿區域 】----------------
-createHeader("⏰ 隨時可拿區域")
-createBtn("🚀 紅色飛彈 - 始點", -394.88, 1062.00, 1049.73)
-createBtn("🚀 紅色飛彈 - 終點", -352.74, 1073.00, 411.19)
-createBtn("❄️ 冰 Cross", 242.86, 688.00, 943.76)
-createBtn("🌋 火山", -600.40, 953.00, 154.01)
-createBtn("🗑️ hex 垃圾", -581.91, 1082.10, 1088.26)
-createBtn("🚆 LXW 列車", -13.57, 863.00, -44.30)
-createBtn("💧 水槍 - 第一開啟點", -279.73, 971.10, -92.11)
-createBtn("💧 水槍 - 第二開啟點", -442.93, 971.10, -195.99)
-createBtn("💧 水槍 - 最後那道", -362.94, 954.83, -57.92)
-createBtn("⚔️ 燃燒劍 - 起始點", -319.00, 1062.00, 1159.26)
-createBtn("⚔️️ 燃燒劍 - 按鈕點", -19.16, 1053.32, 1159.63)
-createBtn("⚔️ 燃燒劍 - 拿到點", 62.42, 1062.00, 1158.05)
+    -- 執行建立或清除
+    if Config.ESPEnabled then
+        for _, obj in ipairs(Workspace:GetChildren()) do
+            if TARGET_MONSTERS[obj.Name] then
+                CreateESP(obj)
+            end
+        end
+    else
+        for monster, _ in pairs(ActiveESPList) do
+            RemoveESP(monster)
+        end
+    end
+end
 
-----------------【 3. 傳送門的 】----------------
-createHeader("🌀 傳送門類別")
-createBtn("🔫 腐化步槍 - 傳送點", -2667.16, 960.00, -432.37)
-createBtn("🔫 腐化步槍 - 終點", -2103.5, 944.2, -431.5)
-createBtn("🔇 靜音", 948.59, 850.00, -1027.96)
-createBtn("🛡️ 靜音 - 無敵幫人點", 948.73, 836.12, -683.84)
-createBtn("🎁 靜音 - 拿到點", 950.16, 859.89, -616.36)
-createBtn("🌈 RGB - 傳送點", -1077.01, 998.00, 786.96)
-createBtn("🌈 RGB - 終點", -1366.5, 1064.2, 984.5)
-createBtn("⬛ LXD(黑色) - 傳送點", 2401.27, 1150.00, 133.31)
-createBtn("⬛ LXD(黑色) - 拿到點", 2238.54, 1151.00, 56.61)
-createBtn("🔫 雙槍 - 起點1", 253.29, 1099.08, 2185.83)
-createBtn("🔫 雙槍 - 終點", 71.21, 1108.61, 1949.26)
+-- ESP 即時更新迴圈 (血量與距離)
+RunService.RenderStepped:Connect(function()
+    if not Config.ESPEnabled then return end
 
-print("51區座標 UI V2 載入完畢！")
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    for monsterModel, billboard in pairs(ActiveESPList) do
+        if monsterModel and monsterModel.Parent and Config.ESPEnabled then
+            local health, maxHealth = GetMonsterHealth(monsterModel)
+            local textLabel = billboard:FindFirstChildOfClass("TextLabel")
+            
+            if textLabel and health then
+                local distStr = ""
+                local targetPart = monsterModel:FindFirstChild("HumanoidRootPart") or monsterModel.PrimaryPart
+                if hrp and targetPart then
+                    local dist = math.floor((hrp.Position - targetPart.Position).Magnitude)
+                    distStr = string.format(" [%dm]", dist)
+                end
+                
+                textLabel.Text = string.format("%s%s\nHP: %d / %d", monsterModel.Name, distStr, math.floor(health), math.floor(maxHealth))
+            end
+        else
+            RemoveESP(monsterModel)
+        end
+    end
+end)
+
+-----------------------------------------------------------------------
+-- 5. UI 介面建立
+-----------------------------------------------------------------------
+local function BuildUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "MonsterTrackerUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = PlayerGui
+
+    -- 主視窗 Panel
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainPanel"
+    mainFrame.Size = UDim2.new(0, 220, 0, 300)
+    mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    mainFrame.BorderSizePixel = 2
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = screenGui
+
+    -- 標題
+    local title = Instance.new("TextLabel")
+    title.Text = "功能選單"
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 16
+    title.Parent = mainFrame
+
+    -- 按鈕 1: ESP 切換開關
+    local espBtn = Instance.new("TextButton")
+    espBtn.Name = "ESPButton"
+    espBtn.Size = UDim2.new(0.85, 0, 0, 35)
+    espBtn.Position = UDim2.new(0.075, 0, 0.15, 0)
+    espBtn.Font = Enum.Font.SourceSansBold
+    espBtn.TextSize = 16
+    espBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espBtn.Parent = mainFrame
+    
+    EspButtonRef = espBtn
+
+    -- 綁定點擊事件
+    espBtn.MouseButton1Click:Connect(function()
+        ToggleESP(not Config.ESPEnabled)
+    end)
+
+    -- 套用初始狀態
+    ToggleESP(Config.ESPEnabled)
+
+    return mainFrame
+end
+
+-----------------------------------------------------------------------
+-- 6. 怪物自動偵測監聽器
+-----------------------------------------------------------------------
+local function CheckAndRegisterMonster(child)
+    if TARGET_MONSTERS[child.Name] then
+        print("[Monster Detected] 發現怪物: " .. child.Name)
+        if Config.ESPEnabled then
+            CreateESP(child)
+        end
+    end
+end
+
+Workspace.ChildAdded:Connect(CheckAndRegisterMonster)
+
+-- 初始掃描 Workspace 既有怪物
+for _, child in ipairs(Workspace:GetChildren()) do
+    CheckAndRegisterMonster(child)
+end
+
+-- 啟動 UI
+BuildUI()

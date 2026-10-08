@@ -4,14 +4,14 @@ local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
--- 1. 怪物配置清單（包含圖片上的三隻怪物）
+-- 1. 怪物配置清單（包含前三張圖的怪物名稱）
 local MONSTERS = {
 	{ name = "Reaper", label = "Reaper" },
 	{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
 	{ name = "Zombie Brute", label = "Zombie Brute" }
 }
 
--- 2. 防止重複創建 UI (安全掛載至 PlayerGui 或 CoreGui)
+-- 2. 掛載 UI 的安全 Parent
 local TargetParent = LocalPlayer:WaitForChild("PlayerGui")
 if gethui then
 	TargetParent = gethui()
@@ -23,7 +23,7 @@ if TargetParent:FindFirstChild("Area51TP_GUI_V2") then
 	TargetParent:FindFirstChild("Area51TP_GUI_V2"):Destroy()
 end
 
--- 3. 建立主 UI ( ScreenGui & MainFrame )
+-- 3. 建立 UI 主框 ( MainFrame )
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Area51TP_GUI_V2"
 ScreenGui.Parent = TargetParent
@@ -39,7 +39,6 @@ MainFrame.Size = UDim2.new(0, 280, 0, 380)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
--- 圓角與外邊框裝飾
 local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 10)
 MainCorner.Parent = MainFrame
@@ -68,7 +67,7 @@ Line.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
 Line.BorderSizePixel = 0
 Line.Parent = MainFrame
 
--- 滾動清單區域
+-- 滾動列表
 local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Name = "MonsterList"
 ScrollFrame.Position = UDim2.new(0, 10, 0, 50)
@@ -89,7 +88,7 @@ UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 ---------------------------------------------------------
--- 4. 邏輯核心：怪物搜尋、ESP(含血量)、傳送
+-- 4. 關鍵修復邏輯：精準取得怪物位置與Part
 ---------------------------------------------------------
 
 -- 搜尋怪物模型
@@ -104,7 +103,36 @@ local function findMonster(monsterName)
 	return nil
 end
 
--- ESP高亮與BillboardGui (顯示名稱與血量)
+-- 取得怪物的代表性 Part (解決有子肢體部件的問題)
+local function getMonsterPart(monster)
+	if not monster then return nil end
+	
+	-- 優先順序：PrimaryPart -> HumanoidRootPart -> Torso / BodyPart -> 任意 BasePart
+	if monster:IsA("Model") and monster.PrimaryPart then
+		return monster.PrimaryPart
+	end
+	
+	local hrp = monster:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then return hrp end
+	
+	-- 搜尋包含 Torso 或 Body 的部件 (例如 Pumpkin Reaper Torso)
+	for _, child in ipairs(monster:GetChildren()) do
+		if child:IsA("BasePart") and (child.Name:find("Torso") or child.Name:find("Body")) then
+			return child
+		end
+	end
+	
+	-- 若沒有上述部件，抓第一個找到的 BasePart (MeshPart)
+	for _, child in ipairs(monster:GetChildren()) do
+		if child:IsA("BasePart") then
+			return child
+		end
+	end
+	
+	return nil
+end
+
+-- 5. ESP (含血量) 邏輯
 local function applyESP(monster, enable)
 	if not monster then return end
 	
@@ -112,7 +140,7 @@ local function applyESP(monster, enable)
 	local existingBillboard = monster:FindFirstChild("MonsterESP_Billboard")
 
 	if enable then
-		-- 高亮外框
+		-- 高亮邊框
 		if not existingHighlight then
 			local highlight = Instance.new("Highlight")
 			highlight.Name = "MonsterESP_Highlight"
@@ -123,15 +151,15 @@ local function applyESP(monster, enable)
 			highlight.Parent = monster
 		end
 
-		-- 頭頂血量顯示牌
+		-- 頭頂血量/名稱牌
 		if not existingBillboard then
-			local head = monster:FindFirstChild("Head") or monster:FindFirstChild("HumanoidRootPart") or monster.PrimaryPart
-			if head then
+			local targetPart = getMonsterPart(monster)
+			if targetPart then
 				local bb = Instance.new("BillboardGui")
 				bb.Name = "MonsterESP_Billboard"
-				bb.Adornee = head
+				bb.Adornee = targetPart
 				bb.Size = UDim2.new(0, 150, 0, 45)
-				bb.StudsOffset = Vector3.new(0, 3.5, 0)
+				bb.StudsOffset = Vector3.new(0, 4, 0)
 				bb.AlwaysOnTop = true
 
 				local nameText = Instance.new("TextLabel")
@@ -165,7 +193,7 @@ local function applyESP(monster, enable)
 	end
 end
 
--- 實時更新血量文字
+-- 實時更新血量顯示
 RunService.RenderStepped:Connect(function()
 	for _, config in ipairs(MONSTERS) do
 		local monster = findMonster(config.name)
@@ -178,18 +206,18 @@ RunService.RenderStepped:Connect(function()
 					local maxHp = math.floor(humanoid.MaxHealth)
 					bb.HPLabel.Text = string.format("HP: %d / %d", hp, maxHp)
 					
-					-- 低血量自動變色
 					local pct = hp / math.max(1, maxHp)
 					bb.HPLabel.TextColor3 = Color3.fromHSV(pct * 0.3, 1, 1)
 				else
-					bb.HPLabel.Text = "HP: N/A"
+					-- 若沒有 Humanoid，顯示在場狀態
+					bb.HPLabel.Text = "HP: 在場"
 				end
 			end
 		end
 	end
 end)
 
--- 5. 動態生成各怪物的 UI 欄位
+-- 6. 動態建立選單行
 local UI_Rows = {}
 
 for _, config in ipairs(MONSTERS) do
@@ -249,7 +277,7 @@ for _, config in ipairs(MONSTERS) do
 	TpCorner.CornerRadius = UDim.new(0, 6)
 	TpCorner.Parent = TpBtn
 
-	-- 按鈕點擊綁定
+	-- 事件綁定
 	local espEnabled = false
 
 	EspBtn.MouseButton1Click:Connect(function()
@@ -264,13 +292,17 @@ for _, config in ipairs(MONSTERS) do
 
 	TpBtn.MouseButton1Click:Connect(function()
 		local monster = findMonster(config.name)
-		if monster and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-			local targetCFrame = monster:GetPivot()
-			LocalPlayer.Character.HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 10, 0)
+		if monster and LocalPlayer.Character then
+			local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			local targetPart = getMonsterPart(monster)
+			
+			if myHrp and targetPart then
+				-- 傳送到怪物的正上方 8 個單位 height
+				myHrp.CFrame = targetPart.CFrame * CFrame.new(0, 8, 0)
+			end
 		end
 	end)
 
-	-- 記錄 UI 引用以供狀態更新
 	UI_Rows[config.name] = {
 		Row = Row,
 		NameLabel = NameLabel,
@@ -280,7 +312,7 @@ for _, config in ipairs(MONSTERS) do
 	}
 end
 
--- 6. 監聽與狀態刷新（亮起 vs 黯淡/不可點擊）
+-- 7. 監聽狀態更新（存在亮起，不存在變灰）
 local function updateUIStates()
 	for _, config in ipairs(MONSTERS) do
 		local data = UI_Rows[config.name]
@@ -289,7 +321,6 @@ local function updateUIStates()
 			local isAlive = (monster ~= nil)
 
 			if isAlive then
-				-- 有怪物：亮起且可點擊
 				data.Row.BackgroundTransparency = 0
 				data.NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 				
@@ -302,12 +333,10 @@ local function updateUIStates()
 				data.TpBtn.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
 				data.TpBtn.TextTransparency = 0
 				
-				-- 重新應用 ESP 狀態（防止怪物重新生成後 ESP 消失）
 				if data.GetEspState() then
 					applyESP(monster, true)
 				end
 			else
-				-- 無怪物：變黯淡且不能按
 				data.Row.BackgroundTransparency = 0.5
 				data.NameLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
 				
@@ -325,7 +354,7 @@ local function updateUIStates()
 	end
 end
 
--- 初始刷新與 Workspace 變動監聽
+-- 初始化與監聽 Workspace
 updateUIStates()
 
 Workspace.ChildAdded:Connect(function(child)

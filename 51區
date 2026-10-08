@@ -1,21 +1,30 @@
 -- =========================================================
--- 精準控制 Head 座標的排列腳本 (高度 Y = 1148)
+-- 全能物件自動傳送排列腳本
+-- 支持 Model、Part、隱藏/觸發後出現的物件
 -- =========================================================
 
--- 1. 設定要排列的模型/物件清單
-local itemsToArrange = {
-	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
-	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
-	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
-	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
+-- 1. 定義要順序排列的物件清單 (可依你想要的順序任意調整)
+local objectPaths = {
+	-- 第一組：Sewer 裡面的開關與水槍
+	{ folder = "Sewer", name = "Valve1" },
+	{ folder = "Sewer", name = "Valve2" },
+	{ folder = "Sewer", name = "GetWaterGun" }, -- 開開關後出現的水槍
+	
+	-- 第二組：Incinerator 裡面的按鈕與燃燒之劍
+	{ folder = "Incinerator", name = "ChallengeButton7" },
+	{ folder = "Incinerator", name = "GetBurningSword" }, -- 觸發後出現的燃燒之劍
+	
+	-- 第三組：Exit 出口開關
+	{ folder = "Workspace", name = "Exit" }, -- 位於 Workspace 直屬
+	
+	-- 第四組：原本的關卡與按鈕組合
+	{ folder = "Floor 2", name = "GetHEXGun" },
+	{ folder = "Floor 2", name = "GetRedMissile" },
+	{ folder = "IceZone", name = "GetIceCrossbow" },
+	{ folder = "LavaZone", name = "Escape" },
 }
 
-local validItems = {}
-for _, item in ipairs(itemsToArrange) do
-	if item then table.insert(validItems, item) end
-end
-
--- 2. 設定目標高度 Y = 1148
+-- 2. 設定目標高度與四個路徑端點 (依之前調好的精準高度)
 local TARGET_Y = 1148.00
 
 local Point1 = Vector3.new(596.51, TARGET_Y, 785.83)
@@ -23,75 +32,97 @@ local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
 local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
 local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
-local BLOCK_SIZE = 5
+local BLOCK_SIZE = 5 -- 每格 5x1x5
 
--- 核心：直接移動 Head，並讓其他附屬元件 (GUI, Attachment) 自動跟隨
-local function moveModelByHead(model, targetPos)
-	-- 關閉所有碰撞，防物理自動升降
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.CanCollide = false
-			part.Anchored = true
+-- 3. 尋找物件的萬能函式 (兼顧 Workspace 根目錄與子資料夾)
+local function findObject(info)
+	if info.folder == "Workspace" then
+		return game.Workspace:FindFirstChild(info.name)
+	else
+		local folderObj = game.Workspace:FindFirstChild(info.folder)
+		if folderObj then
+			return folderObj:FindFirstChild(info.name)
 		end
 	end
-	
-	local mainPart = model:FindFirstChild("Head") or model.PrimaryPart or model:FindFirstChildOfClass("BasePart")
-	
-	if mainPart then
-		-- 如果 Model 沒有設定 PrimaryPart，動態把它指定為 Head
-		if model:IsA("Model") then
-			model.PrimaryPart = mainPart
-			model:SetPrimaryPartCFrame(CFrame.new(targetPos))
+	return nil
+end
+
+-- 4. 通用移動函式 (自動相容 Model 裡面的 Head/PrimaryPart，或是單一 Part)
+local function moveTargetToPosition(targetObj, targetPos)
+	-- 關閉碰撞並錨定，防止物理自動跳開
+	for _, desc in ipairs(targetObj:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			desc.CanCollide = false
+			desc.Anchored = true
+		end
+	end
+	if targetObj:IsA("BasePart") then
+		targetObj.CanCollide = false
+		targetObj.Anchored = true
+	end
+
+	-- 移動邏輯
+	if targetObj:IsA("Model") then
+		local mainPart = targetObj:FindFirstChild("Head") or targetObj.PrimaryPart or targetObj:FindFirstChildOfClass("BasePart")
+		if mainPart then
+			targetObj.PrimaryPart = mainPart
+			targetObj:SetPrimaryPartCFrame(CFrame.new(targetPos))
 		else
-			mainPart.CFrame = CFrame.new(targetPos)
+			targetObj:PivotTo(CFrame.new(targetPos))
+		end
+	elseif targetObj:IsA("BasePart") then
+		targetObj.CFrame = CFrame.new(targetPos)
+	end
+end
+
+-- 5. 計算路徑網格上的各個 Slot (格子) 位置
+local slotPositions = {}
+
+local line1Vector = Point2 - Point1
+local line1Length = line1Vector.Magnitude
+local countLine1 = math.floor(line1Length / BLOCK_SIZE)
+
+for i = 0, countLine1 do
+	local alpha = (i * BLOCK_SIZE) / line1Length
+	if alpha <= 1 then
+		table.insert(slotPositions, Point1:Lerp(Point2, alpha))
+	end
+end
+
+local line2Vector = Point4 - Point3
+local line2Length = line2Vector.Magnitude
+local countLine2 = math.floor(line2Length / BLOCK_SIZE)
+
+for i = 0, countLine2 do
+	local alpha = (i * BLOCK_SIZE) / line2Length
+	if alpha <= 1 then
+		table.insert(slotPositions, Point3:Lerp(Point4, alpha))
+	end
+end
+
+-- 6. 執行排列與自動監聽（當水槍/燃燒之劍剛生成時也能立刻傳送）
+local function refreshArrangement()
+	for index, info in ipairs(objectPaths) do
+		local targetObj = findObject(info)
+		local targetPos = slotPositions[index]
+		
+		if targetObj and targetPos then
+			moveTargetToPosition(targetObj, targetPos)
+			print(string.format("已傳送 [%s] 到格子 #%d (%.2f, %.2f, %.2f)", info.name, index, targetPos.X, targetPos.Y, targetPos.Z))
 		end
 	end
 end
 
--- 3. 自動排列邏輯
-local function arrangeItems()
-	print("開始依照 Head 精準定位 (Y = 1148)...")
-	
-	local line1Vector = Point2 - Point1
-	local line1Length = line1Vector.Magnitude
-	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
-	
-	local line2Vector = Point4 - Point3
-	local line2Length = line2Vector.Magnitude
-	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
-	
-	local currentItemIndex = 1
-	local totalItems = #validItems
-	
-	-- 排列第一條線
-	for i = 0, countLine1 do
-		if currentItemIndex > totalItems then break end
-		local alpha = (i * BLOCK_SIZE) / line1Length
-		if alpha > 1 then break end
-		
-		local spawnPos = Point1:Lerp(Point2, alpha)
-		local item = validItems[currentItemIndex]
-		
-		moveModelByHead(item, spawnPos)
-		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
-		currentItemIndex = currentItemIndex + 1
-	end
-	
-	-- 排列第二條線
-	for i = 0, countLine2 do
-		if currentItemIndex > totalItems then break end
-		local alpha = (i * BLOCK_SIZE) / line2Length
-		if alpha > 1 then break end
-		
-		local spawnPos = Point3:Lerp(Point4, alpha)
-		local item = validItems[currentItemIndex]
-		
-		moveModelByHead(item, spawnPos)
-		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
-		currentItemIndex = currentItemIndex + 1
-	end
-	
-	print("排列完成！")
-end
+-- 立即執行一次現有物件排列
+refreshArrangement()
 
-arrangeItems()
+-- 7. 動態監聽新生成的物件 (針對開完開關才出現的水槍、燃燒之劍等)
+game.Workspace.DescendantAdded:Connect(function(descendant)
+	task.wait(0.1) -- 稍微等待物件加載完成
+	for index, info in ipairs(objectPaths) do
+		if descendant.Name == info.name then
+			refreshArrangement()
+			break
+		end
+	end
+end)

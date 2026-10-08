@@ -4,7 +4,7 @@ local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
--- 1. 怪物配置清單（包含前三張圖的怪物名稱）
+-- 1. 怪物配置清單（包含圖中怪物名稱）
 local MONSTERS = {
 	{ name = "Reaper", label = "Reaper" },
 	{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
@@ -34,8 +34,8 @@ MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
 MainFrame.BorderSizePixel = 0
-MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
-MainFrame.Size = UDim2.new(0, 280, 0, 380)
+MainFrame.Position = UDim2.new(0.2, 0, 0.15, 0)
+MainFrame.Size = UDim2.new(0, 460, 0, 380) -- 加寬介面以容納更多元件
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -53,7 +53,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Name = "Title"
 TitleLabel.Size = UDim2.new(1, 0, 0, 40)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "怪物監聽與傳送面板"
+TitleLabel.Text = "怪物監聽與高級傳送控制"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 16
 TitleLabel.Font = Enum.Font.SourceSansBold
@@ -88,10 +88,9 @@ UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 ---------------------------------------------------------
--- 4. 關鍵修復邏輯：精準取得怪物位置與Part
+-- 4. 關鍵輔助函數：搜尋怪物與 Part 抓取
 ---------------------------------------------------------
 
--- 搜尋怪物模型
 local function findMonster(monsterName)
 	local monster = Workspace:FindFirstChild(monsterName)
 	if monster then return monster end
@@ -103,11 +102,9 @@ local function findMonster(monsterName)
 	return nil
 end
 
--- 取得怪物的代表性 Part (解決有子肢體部件的問題)
 local function getMonsterPart(monster)
 	if not monster then return nil end
 	
-	-- 優先順序：PrimaryPart -> HumanoidRootPart -> Torso / BodyPart -> 任意 BasePart
 	if monster:IsA("Model") and monster.PrimaryPart then
 		return monster.PrimaryPart
 	end
@@ -115,14 +112,12 @@ local function getMonsterPart(monster)
 	local hrp = monster:FindFirstChild("HumanoidRootPart")
 	if hrp and hrp:IsA("BasePart") then return hrp end
 	
-	-- 搜尋包含 Torso 或 Body 的部件 (例如 Pumpkin Reaper Torso)
 	for _, child in ipairs(monster:GetChildren()) do
 		if child:IsA("BasePart") and (child.Name:find("Torso") or child.Name:find("Body")) then
 			return child
 		end
 	end
 	
-	-- 若沒有上述部件，抓第一個找到的 BasePart (MeshPart)
 	for _, child in ipairs(monster:GetChildren()) do
 		if child:IsA("BasePart") then
 			return child
@@ -132,7 +127,7 @@ local function getMonsterPart(monster)
 	return nil
 end
 
--- 5. ESP (含血量) 邏輯
+-- ESP (含血量)
 local function applyESP(monster, enable)
 	if not monster then return end
 	
@@ -140,7 +135,6 @@ local function applyESP(monster, enable)
 	local existingBillboard = monster:FindFirstChild("MonsterESP_Billboard")
 
 	if enable then
-		-- 高亮邊框
 		if not existingHighlight then
 			local highlight = Instance.new("Highlight")
 			highlight.Name = "MonsterESP_Highlight"
@@ -151,7 +145,6 @@ local function applyESP(monster, enable)
 			highlight.Parent = monster
 		end
 
-		-- 頭頂血量/名稱牌
 		if not existingBillboard then
 			local targetPart = getMonsterPart(monster)
 			if targetPart then
@@ -193,7 +186,7 @@ local function applyESP(monster, enable)
 	end
 end
 
--- 實時更新血量顯示
+-- 實時血量更新
 RunService.RenderStepped:Connect(function()
 	for _, config in ipairs(MONSTERS) do
 		local monster = findMonster(config.name)
@@ -209,7 +202,6 @@ RunService.RenderStepped:Connect(function()
 					local pct = hp / math.max(1, maxHp)
 					bb.HPLabel.TextColor3 = Color3.fromHSV(pct * 0.3, 1, 1)
 				else
-					-- 若沒有 Humanoid，顯示在場狀態
 					bb.HPLabel.Text = "HP: 在場"
 				end
 			end
@@ -217,8 +209,12 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- 6. 動態建立選單行
+---------------------------------------------------------
+-- 5. 動態生成 UI 橫列 (包含 傳送 / 距離輸入 / 持續傳送)
+---------------------------------------------------------
+
 local UI_Rows = {}
+local loopConnections = {} -- 紀錄持續傳送的每幀監聽
 
 for _, config in ipairs(MONSTERS) do
 	local Row = Instance.new("Frame")
@@ -236,12 +232,12 @@ for _, config in ipairs(MONSTERS) do
 	local NameLabel = Instance.new("TextLabel")
 	NameLabel.Name = "MonsterName"
 	NameLabel.Position = UDim2.new(0, 10, 0, 8)
-	NameLabel.Size = UDim2.new(1, -20, 0, 22)
+	NameLabel.Size = UDim2.new(0, 110, 0, 22)
 	NameLabel.BackgroundTransparency = 1
 	NameLabel.Text = config.label
 	NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	NameLabel.Font = Enum.Font.SourceSansBold
-	NameLabel.TextSize = 16
+	NameLabel.TextSize = 15
 	NameLabel.TextXAlignment = Enum.TextXAlignment.Left
 	NameLabel.Parent = Row
 
@@ -249,47 +245,96 @@ for _, config in ipairs(MONSTERS) do
 	local EspBtn = Instance.new("TextButton")
 	EspBtn.Name = "EspButton"
 	EspBtn.Position = UDim2.new(0, 10, 0, 38)
-	EspBtn.Size = UDim2.new(0.45, -5, 0, 35)
+	EspBtn.Size = UDim2.new(0, 75, 0, 35)
 	EspBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-	EspBtn.Text = "ESP: 關"
+	EspBtn.Text = "ESP"
 	EspBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	EspBtn.Font = Enum.Font.SourceSans
-	EspBtn.TextSize = 14
+	EspBtn.TextSize = 13
 	EspBtn.Parent = Row
 
 	local EspCorner = Instance.new("UICorner")
 	EspCorner.CornerRadius = UDim.new(0, 6)
 	EspCorner.Parent = EspBtn
 
-	-- 傳送到上方按鈕
+	-- 1. 單次傳送按鈕 (第一個)
 	local TpBtn = Instance.new("TextButton")
 	TpBtn.Name = "TpButton"
-	TpBtn.Position = UDim2.new(0.45, 5, 0, 38)
-	TpBtn.Size = UDim2.new(0.55, -15, 0, 35)
+	TpBtn.Position = UDim2.new(0, 95, 0, 38)
+	TpBtn.Size = UDim2.new(0, 80, 0, 35)
 	TpBtn.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
-	TpBtn.Text = "傳送到上方"
+	TpBtn.Text = "傳送"
 	TpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	TpBtn.Font = Enum.Font.SourceSansBold
-	TpBtn.TextSize = 14
+	TpBtn.TextSize = 13
 	TpBtn.Parent = Row
 
 	local TpCorner = Instance.new("UICorner")
 	TpCorner.CornerRadius = UDim.new(0, 6)
 	TpCorner.Parent = TpBtn
 
-	-- 事件綁定
-	local espEnabled = false
+	-- 2. 距離輸入框 (第二個 - 可輸入正數或負數)
+	local DistanceBox = Instance.new("TextBox")
+	DistanceBox.Name = "DistanceBox"
+	DistanceBox.Position = UDim2.new(0, 185, 0, 38)
+	DistanceBox.Size = UDim2.new(0, 110, 0, 35)
+	DistanceBox.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+	DistanceBox.Text = "8" -- 預設高度為 8
+	DistanceBox.PlaceholderText = "上下距離"
+	DistanceBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	DistanceBox.Font = Enum.Font.SourceSans
+	DistanceBox.TextSize = 13
+	DistanceBox.Parent = Row
 
+	local DistCorner = Instance.new("UICorner")
+	DistCorner.CornerRadius = UDim.new(0, 6)
+	DistCorner.Parent = DistanceBox
+
+	local DistStroke = Instance.new("UIStroke")
+	DistStroke.Color = Color3.fromRGB(60, 60, 65)
+	DistStroke.Thickness = 1
+	DistStroke.Parent = DistanceBox
+
+	-- 3. 持續傳送按鈕 (第三個)
+	local LoopTpBtn = Instance.new("TextButton")
+	LoopTpBtn.Name = "LoopTpButton"
+	LoopTpBtn.Position = UDim2.new(0, 305, 0, 38)
+	LoopTpBtn.Size = UDim2.new(0, 125, 0, 35)
+	LoopTpBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
+	LoopTpBtn.Text = "持續傳送: 關"
+	LoopTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	LoopTpBtn.Font = Enum.Font.SourceSansBold
+	LoopTpBtn.TextSize = 13
+	LoopTpBtn.Parent = Row
+
+	local LoopCorner = Instance.new("UICorner")
+	LoopCorner.CornerRadius = UDim.new(0, 6)
+	LoopCorner.Parent = LoopTpBtn
+
+	---------------------------------------------------------
+	-- 功能邏輯綁定
+	---------------------------------------------------------
+	local espEnabled = false
+	local loopEnabled = false
+
+	-- 取得目前輸入框內的數值（支援正數與負數）
+	local function getOffsetDistance()
+		local num = tonumber(DistanceBox.Text)
+		return num or 8 -- 若輸入非數字則預設為 8
+	end
+
+	-- ESP 點擊
 	EspBtn.MouseButton1Click:Connect(function()
 		local monster = findMonster(config.name)
 		if monster then
 			espEnabled = not espEnabled
-			EspBtn.Text = espEnabled and "ESP: 開" or "ESP: 關"
+			EspBtn.Text = espEnabled and "ESP: 開" or "ESP"
 			EspBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(40, 160, 80) or Color3.fromRGB(50, 50, 55)
 			applyESP(monster, espEnabled)
 		end
 	end)
 
+	-- 單次傳送點擊
 	TpBtn.MouseButton1Click:Connect(function()
 		local monster = findMonster(config.name)
 		if monster and LocalPlayer.Character then
@@ -297,8 +342,45 @@ for _, config in ipairs(MONSTERS) do
 			local targetPart = getMonsterPart(monster)
 			
 			if myHrp and targetPart then
-				-- 傳送到怪物的正上方 8 個單位 height
-				myHrp.CFrame = targetPart.CFrame * CFrame.new(0, 8, 0)
+				local offset = getOffsetDistance()
+				myHrp.CFrame = targetPart.CFrame * CFrame.new(0, offset, 0)
+			end
+		end
+	end)
+
+	-- 持續傳送點擊
+	LoopTpBtn.MouseButton1Click:Connect(function()
+		loopEnabled = not loopEnabled
+		
+		if loopEnabled then
+			LoopTpBtn.Text = "持續傳送: 開"
+			LoopTpBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+			
+			-- 解除舊的連線 (如果有)
+			if loopConnections[config.name] then
+				loopConnections[config.name]:Disconnect()
+			end
+			
+			-- 建立 RenderStepped 連線每幀跟隨
+			loopConnections[config.name] = RunService.RenderStepped:Connect(function()
+				local monster = findMonster(config.name)
+				if monster and LocalPlayer.Character then
+					local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+					local targetPart = getMonsterPart(monster)
+					
+					if myHrp and targetPart then
+						local offset = getOffsetDistance()
+						myHrp.CFrame = targetPart.CFrame * CFrame.new(0, offset, 0)
+					end
+				end
+			end)
+		else
+			LoopTpBtn.Text = "持續傳送: 關"
+			LoopTpBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
+			
+			if loopConnections[config.name] then
+				loopConnections[config.name]:Disconnect()
+				loopConnections[config.name] = nil
 			end
 		end
 	end)
@@ -308,11 +390,22 @@ for _, config in ipairs(MONSTERS) do
 		NameLabel = NameLabel,
 		EspBtn = EspBtn,
 		TpBtn = TpBtn,
-		GetEspState = function() return espEnabled end
+		DistanceBox = DistanceBox,
+		LoopTpBtn = LoopTpBtn,
+		GetEspState = function() return espEnabled end,
+		StopLoop = function()
+			loopEnabled = false
+			LoopTpBtn.Text = "持續傳送: 關"
+			LoopTpBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
+			if loopConnections[config.name] then
+				loopConnections[config.name]:Disconnect()
+				loopConnections[config.name] = nil
+			end
+		end
 	}
 end
 
--- 7. 監聽狀態更新（存在亮起，不存在變灰）
+-- 6. 監聽狀態更新（存在亮起，不存在變灰）
 local function updateUIStates()
 	for _, config in ipairs(MONSTERS) do
 		local data = UI_Rows[config.name]
@@ -333,10 +426,20 @@ local function updateUIStates()
 				data.TpBtn.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
 				data.TpBtn.TextTransparency = 0
 				
+				data.DistanceBox.TextEditable = true
+				data.DistanceBox.TextTransparency = 0
+				
+				data.LoopTpBtn.Active = true
+				data.LoopTpBtn.AutoButtonColor = true
+				data.LoopTpBtn.TextTransparency = 0
+				
 				if data.GetEspState() then
 					applyESP(monster, true)
 				end
 			else
+				-- 怪物消失時自動關閉持續傳送
+				data.StopLoop()
+				
 				data.Row.BackgroundTransparency = 0.5
 				data.NameLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
 				
@@ -349,6 +452,14 @@ local function updateUIStates()
 				data.TpBtn.AutoButtonColor = false
 				data.TpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
 				data.TpBtn.TextTransparency = 0.5
+				
+				data.DistanceBox.TextEditable = false
+				data.DistanceBox.TextTransparency = 0.5
+				
+				data.LoopTpBtn.Active = false
+				data.LoopTpBtn.AutoButtonColor = false
+				data.LoopTpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+				data.LoopTpBtn.TextTransparency = 0.5
 			end
 		end
 	end

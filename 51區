@@ -1,7 +1,8 @@
 -- =========================================================
--- 強制精準定位腳本（無視碰撞與物理排擠）
+-- Roblox 物件沿座標路徑自動排列腳本 (高度 Y = 1150)
 -- =========================================================
 
+-- 1. 設定要排列的模型/物件清單 (依照您想擺放的順序)
 local itemsToArrange = {
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
@@ -9,24 +10,28 @@ local itemsToArrange = {
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
 }
 
+-- 過濾掉找不到的物件
 local validItems = {}
 for _, item in ipairs(itemsToArrange) do
-	if item then table.insert(validItems, item) end
+	if item then
+		table.insert(validItems, item)
+	end
 end
 
--- 指定準確高度 Y
-local TARGET_Y = 1206.5
+-- 2. 設定目標高度 Y = 1150 與四個關鍵座標點
+local TARGET_Y = 1150.00
 
-local Point1 = Vector3.new(596.51, TARGET_Y, 785.83)
-local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
-local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
-local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
+local Point1 = Vector3.new(596.51, TARGET_Y, 785.83) -- 第一座標點 (左上)
+local Point2 = Vector3.new(596.69, TARGET_Y, 715.76) -- 第二座標點 (右上)
 
-local BLOCK_SIZE = 5
+local Point3 = Vector3.new(614.35, TARGET_Y, 782.40) -- 第三座標點 (左下)
+local Point4 = Vector3.new(614.96, TARGET_Y, 715.58) -- 第四座標點 (右下)
 
--- 強制放置函式
+local BLOCK_SIZE = 5 -- 每格單位大小 (5x1x5)
+
+-- 強制放置與鎖定物理狀態
 local function forceSetPosition(target, targetPos)
-	-- 遍歷所有 BasePart 暫時關閉碰撞並固定，防止物理推高
+	-- 關閉碰撞並固定，避免 Roblox 物理引擎做自動抬升或彈跳
 	for _, part in ipairs(target:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.CanCollide = false
@@ -34,7 +39,7 @@ local function forceSetPosition(target, targetPos)
 		end
 	end
 	
-	-- 使用 PivotTo 強制指定精確 CFrame (不使用會自動抬升高度的 MoveTo)
+	-- 使用 PivotTo 強制覆蓋指定 CFrame
 	if target:IsA("Model") then
 		target:PivotTo(CFrame.new(targetPos))
 	elseif target:IsA("BasePart") then
@@ -42,13 +47,16 @@ local function forceSetPosition(target, targetPos)
 	end
 end
 
+-- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始強制精準定位...")
+	print("開始進行物件自動排列 (Y = 1150)...")
 	
+	-- 計算第一條線 (Point1 -> Point2)
 	local line1Vector = Point2 - Point1
 	local line1Length = line1Vector.Magnitude
 	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
 	
+	-- 計算第二條線 (Point3 -> Point4)
 	local line2Vector = Point4 - Point3
 	local line2Length = line2Vector.Magnitude
 	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
@@ -56,9 +64,10 @@ local function arrangeItems()
 	local currentItemIndex = 1
 	local totalItems = #validItems
 	
-	-- 排列路徑一
+	-- 沿第一條路徑排列
 	for i = 0, countLine1 do
 		if currentItemIndex > totalItems then break end
+		
 		local alpha = (i * BLOCK_SIZE) / line1Length
 		if alpha > 1 then break end
 		
@@ -66,23 +75,14 @@ local function arrangeItems()
 		local item = validItems[currentItemIndex]
 		
 		forceSetPosition(item, spawnPos)
-		print(string.format("已強制放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
+		print(string.format("已放置 [%s] 到路徑一，座標: (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
+		
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	-- 排列路徑二
+	-- 沿第二條路徑排列
 	for i = 0, countLine2 do
 		if currentItemIndex > totalItems then break end
+		
 		local alpha = (i * BLOCK_SIZE) / line2Length
 		if alpha > 1 then break end
-		
-		local spawnPos = Point3:Lerp(Point4, alpha)
-		local item = validItems[currentItemIndex]
-		
-		forceSetPosition(item, spawnPos)
-		print(string.format("已強制放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
-		currentItemIndex = currentItemIndex + 1
-	end
-end
-
-arrangeItems()

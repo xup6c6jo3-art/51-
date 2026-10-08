@@ -35,7 +35,7 @@ MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Position = UDim2.new(0.2, 0, 0.15, 0)
-MainFrame.Size = UDim2.new(0, 460, 0, 430) -- 調整高度以容納傳槍區塊
+MainFrame.Size = UDim2.new(0, 460, 0, 380)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
@@ -53,7 +53,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Name = "Title"
 TitleLabel.Size = UDim2.new(1, 0, 0, 40)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "怪物監聽 & 流暢傳送面板"
+TitleLabel.Text = "怪物監聽與流暢傳送面板"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 16
 TitleLabel.Font = Enum.Font.SourceSansBold
@@ -71,7 +71,7 @@ Line.Parent = MainFrame
 local ScrollFrame = Instance.new("ScrollingFrame")
 ScrollFrame.Name = "MonsterList"
 ScrollFrame.Position = UDim2.new(0, 10, 0, 50)
-ScrollFrame.Size = UDim2.new(1, -20, 1, -110)
+ScrollFrame.Size = UDim2.new(1, -20, 1, -60)
 ScrollFrame.BackgroundTransparency = 1
 ScrollFrame.BorderSizePixel = 0
 ScrollFrame.ScrollBarThickness = 4
@@ -88,37 +88,7 @@ UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 ---------------------------------------------------------
--- 底部通用功能區：傳槍 (Bring Gun)
----------------------------------------------------------
-local BottomFrame = Instance.new("Frame")
-BottomFrame.Name = "BottomFrame"
-BottomFrame.Position = UDim2.new(0, 10, 1, -55)
-BottomFrame.Size = UDim2.new(1, -20, 0, 45)
-BottomFrame.BackgroundColor3 = Color3.fromRGB(38, 38, 42)
-BottomFrame.BorderSizePixel = 0
-BottomFrame.Parent = MainFrame
-
-local BottomCorner = Instance.new("UICorner")
-BottomCorner.CornerRadius = UDim.new(0, 8)
-BottomCorner.Parent = BottomFrame
-
-local GunBtn = Instance.new("TextButton")
-GunBtn.Name = "BringGunButton"
-GunBtn.Position = UDim2.new(0, 10, 0, 7)
-GunBtn.Size = UDim2.new(1, -20, 0, 30)
-GunBtn.BackgroundColor3 = Color3.fromRGB(130, 80, 220)
-GunBtn.Text = "自動吸槍 / 傳槍: 關"
-GunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-GunBtn.Font = Enum.Font.SourceSansBold
-GunBtn.TextSize = 14
-GunBtn.Parent = BottomFrame
-
-local GunCorner = Instance.new("UICorner")
-GunCorner.CornerRadius = UDim.new(0, 6)
-GunCorner.Parent = GunBtn
-
----------------------------------------------------------
--- 4. 輔助函數：搜尋怪物與 Part 抓取
+-- 4. 輔助函數：搜尋怪物、Part 與 Noclip 穿牆控制
 ---------------------------------------------------------
 
 local function findMonster(monsterName)
@@ -134,9 +104,11 @@ end
 
 local function getMonsterPart(monster)
 	if not monster then return nil end
+	
 	if monster:IsA("Model") and monster.PrimaryPart then
 		return monster.PrimaryPart
 	end
+	
 	local hrp = monster:FindFirstChild("HumanoidRootPart")
 	if hrp and hrp:IsA("BasePart") then return hrp end
 	
@@ -145,12 +117,26 @@ local function getMonsterPart(monster)
 			return child
 		end
 	end
+	
 	for _, child in ipairs(monster:GetChildren()) do
 		if child:IsA("BasePart") then
 			return child
 		end
 	end
+	
 	return nil
+end
+
+-- 設定角色穿牆 (Noclip)
+local function setNoclip(enabled)
+	local char = LocalPlayer.Character
+	if char then
+		for _, part in ipairs(char:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.CanCollide = not enabled
+			end
+		end
+	end
 end
 
 -- ESP (含血量)
@@ -236,77 +222,11 @@ RunService.RenderStepped:Connect(function()
 end)
 
 ---------------------------------------------------------
--- 5. 流暢跟隨（防抖動重點）與 傳槍連線控制
----------------------------------------------------------
-
-local loopConnections = {} -- 紀錄傳送連線
-local bringGunConnection = nil
-local bringGunActive = false
-
--- 流暢平滑傳送函數 (防止抖動)
-local function smoothTeleport(myHrp, targetCFrame)
-	if not myHrp or not targetCFrame then return end
-	
-	-- 消除速度影響，防止重力物理累積導致抖動
-	myHrp.AssemblyLinearVelocity = Vector3.zero
-	myHrp.AssemblyAngularVelocity = Vector3.zero
-	myHrp.CFrame = targetCFrame
-end
-
--- 傳槍邏輯
-local function bringAllGuns()
-	if not LocalPlayer.Character then return end
-	local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not myHrp then return end
-
-	for _, item in ipairs(Workspace:GetDescendants()) do
-		if item:IsA("Tool") or item:IsA("Weapon") then
-			local handle = item:FindFirstChild("Handle") or item:FindFirstChildOfClass("BasePart")
-			if handle then
-				-- 將地圖上的槍傳送到玩家手邊/腳下觸發拾取
-				handle.CFrame = myHrp.CFrame
-				if item:FindFirstChildOfClass("TouchTransmitter") then
-					firetouchinterest(myHrp, handle, 0)
-					firetouchinterest(myHrp, handle, 1)
-				end
-			end
-		end
-	end
-end
-
--- 傳槍按鈕點擊事件（開啟/關閉）
-GunBtn.MouseButton1Click:Connect(function()
-	bringGunActive = not bringGunActive
-	
-	if bringGunActive then
-		GunBtn.Text = "自動吸槍 / 傳槍: 開"
-		GunBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 80)
-		
-		if bringGunConnection then bringGunConnection:Disconnect() end
-		
-		-- 每 0.2 秒進行一次吸槍/傳槍，確保流暢不卡頓
-		bringGunConnection = task.spawn(function()
-			while bringGunActive do
-				bringAllGuns()
-				task.wait(0.2)
-			end
-		end)
-	else
-		-- 完全關閉傳槍
-		GunBtn.Text = "自動吸槍 / 傳槍: 關"
-		GunBtn.BackgroundColor3 = Color3.fromRGB(130, 80, 220)
-		if bringGunConnection then
-			bringGunActive = false
-			bringGunConnection = nil
-		end
-	end
-end)
-
----------------------------------------------------------
--- 6. 怪物 UI 橫列
+-- 5. UI 項目生成與流暢傳送邏輯
 ---------------------------------------------------------
 
 local UI_Rows = {}
+local loopConnections = {}
 
 for _, config in ipairs(MONSTERS) do
 	local Row = Instance.new("Frame")
@@ -365,14 +285,14 @@ for _, config in ipairs(MONSTERS) do
 	TpCorner.CornerRadius = UDim.new(0, 6)
 	TpCorner.Parent = TpBtn
 
-	-- 2. 上下距離輸入框 (正/負數)
+	-- 2. 上下距離輸入框
 	local DistanceBox = Instance.new("TextBox")
 	DistanceBox.Name = "DistanceBox"
 	DistanceBox.Position = UDim2.new(0, 185, 0, 38)
 	DistanceBox.Size = UDim2.new(0, 110, 0, 35)
 	DistanceBox.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 	DistanceBox.Text = "8"
-	DistanceBox.PlaceholderText = "距離"
+	DistanceBox.PlaceholderText = "上下距離"
 	DistanceBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 	DistanceBox.Font = Enum.Font.SourceSans
 	DistanceBox.TextSize = 13
@@ -381,6 +301,11 @@ for _, config in ipairs(MONSTERS) do
 	local DistCorner = Instance.new("UICorner")
 	DistCorner.CornerRadius = UDim.new(0, 6)
 	DistCorner.Parent = DistanceBox
+
+	local DistStroke = Instance.new("UIStroke")
+	DistStroke.Color = Color3.fromRGB(60, 60, 65)
+	DistStroke.Thickness = 1
+	DistStroke.Parent = DistanceBox
 
 	-- 3. 持續傳送按鈕
 	local LoopTpBtn = Instance.new("TextButton")
@@ -429,12 +354,12 @@ for _, config in ipairs(MONSTERS) do
 			
 			if myHrp and targetPart then
 				local offset = getOffsetDistance()
-				smoothTeleport(myHrp, targetPart.CFrame * CFrame.new(0, offset, 0))
+				myHrp.CFrame = targetPart.CFrame * CFrame.new(0, offset, 0)
 			end
 		end
 	end)
 
-	-- 持續傳送點擊（無抖動優化版）
+	-- 持續傳送點擊 (流暢傳送 + Noclip 穿牆)
 	LoopTpBtn.MouseButton1Click:Connect(function()
 		loopEnabled = not loopEnabled
 		
@@ -446,7 +371,7 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name]:Disconnect()
 			end
 			
-			-- 使用 RunService.Stepped（物理模擬前）處理，徹底解決上下晃動問題
+			-- 使用 Stepped 階段鎖定，完全消除物理反彈產生的抖動
 			loopConnections[config.name] = RunService.Stepped:Connect(function()
 				local monster = findMonster(config.name)
 				if monster and LocalPlayer.Character then
@@ -454,13 +379,18 @@ for _, config in ipairs(MONSTERS) do
 					local targetPart = getMonsterPart(monster)
 					
 					if myHrp and targetPart then
+						setNoclip(true) -- 開啟穿牆
+						
+						-- 重置角色物理速度，解決速度積累造成的震動
+						myHrp.Velocity = Vector3.new(0, 0, 0)
+						myHrp.RotVelocity = Vector3.new(0, 0, 0)
+						
 						local offset = getOffsetDistance()
-						smoothTeleport(myHrp, targetPart.CFrame * CFrame.new(0, offset, 0))
+						myHrp.CFrame = targetPart.CFrame * CFrame.new(0, offset, 0)
 					end
 				end
 			end)
 		else
-			-- 徹底關閉連線
 			LoopTpBtn.Text = "持續傳送: 關"
 			LoopTpBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 75)
 			
@@ -468,6 +398,8 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name]:Disconnect()
 				loopConnections[config.name] = nil
 			end
+			
+			setNoclip(false) -- 關閉持續傳送時，自動關閉穿牆恢復正常碰撞
 		end
 	end)
 
@@ -487,11 +419,12 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name]:Disconnect()
 				loopConnections[config.name] = nil
 			end
+			setNoclip(false) -- 怪物消失或停用時確保關閉穿牆
 		end
 	}
 end
 
--- 7. 監聽狀態更新（存在亮起，不存在變灰並自動關閉傳送/連線）
+-- 6. 監聽狀態更新（存在亮起，不存在變灰）
 local function updateUIStates()
 	for _, config in ipairs(MONSTERS) do
 		local data = UI_Rows[config.name]
@@ -523,8 +456,7 @@ local function updateUIStates()
 					applyESP(monster, true)
 				end
 			else
-				-- 怪物消失時自動解鎖並停止持續傳送，防止記憶體洩漏與抖動殘留
-				data.StopLoop()
+				data.StopLoop() -- 怪物不在時自動停止跟隨與穿牆
 				
 				data.Row.BackgroundTransparency = 0.5
 				data.NameLabel.TextColor3 = Color3.fromRGB(120, 120, 120)

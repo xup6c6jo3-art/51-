@@ -1,5 +1,5 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (修正地面高度 Y = 1238.5)
+-- 精準控制 Head 座標的排列腳本 (高度 Y = 1148)
 -- =========================================================
 
 -- 1. 設定要排列的模型/物件清單
@@ -10,51 +10,52 @@ local itemsToArrange = {
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
 }
 
--- 過濾掉找不到的物件
 local validItems = {}
 for _, item in ipairs(itemsToArrange) do
-	if item then
-		table.insert(validItems, item)
-	end
+	if item then table.insert(validItems, item) end
 end
 
--- 2. 根據 Properties 面板修正：地板實際表面約在 Y = 1238.5
-local TARGET_Y = 1238.50
+-- 2. 設定目標高度 Y = 1148
+local TARGET_Y = 1148.00
 
-local Point1 = Vector3.new(596.51, TARGET_Y, 785.83) -- 第一座標點 (左上)
-local Point2 = Vector3.new(596.69, TARGET_Y, 715.76) -- 第二座標點 (右上)
+local Point1 = Vector3.new(596.51, TARGET_Y, 785.83)
+local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
+local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
+local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
-local Point3 = Vector3.new(614.35, TARGET_Y, 782.40) -- 第三座標點 (左下)
-local Point4 = Vector3.new(614.96, TARGET_Y, 715.58) -- 第四座標點 (右下)
+local BLOCK_SIZE = 5
 
-local BLOCK_SIZE = 5 -- 每格單位大小 (5x1x5)
-
--- 強制放置與鎖定物理狀態
-local function forceSetPosition(target, targetPos)
-	for _, part in ipairs(target:GetDescendants()) do
+-- 核心：直接移動 Head，並讓其他附屬元件 (GUI, Attachment) 自動跟隨
+local function moveModelByHead(model, targetPos)
+	-- 關閉所有碰撞，防物理自動升降
+	for _, part in ipairs(model:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.CanCollide = false
 			part.Anchored = true
 		end
 	end
 	
-	if target:IsA("Model") then
-		target:PivotTo(CFrame.new(targetPos))
-	elseif target:IsA("BasePart") then
-		target.CFrame = CFrame.new(targetPos)
+	local mainPart = model:FindFirstChild("Head") or model.PrimaryPart or model:FindFirstChildOfClass("BasePart")
+	
+	if mainPart then
+		-- 如果 Model 沒有設定 PrimaryPart，動態把它指定為 Head
+		if model:IsA("Model") then
+			model.PrimaryPart = mainPart
+			model:SetPrimaryPartCFrame(CFrame.new(targetPos))
+		else
+			mainPart.CFrame = CFrame.new(targetPos)
+		end
 	end
 end
 
 -- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始進行物件自動排列 (對齊地板高度 Y = 1238.5)...")
+	print("開始依照 Head 精準定位 (Y = 1148)...")
 	
-	-- 第一條線 (Point1 -> Point2)
 	local line1Vector = Point2 - Point1
 	local line1Length = line1Vector.Magnitude
 	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
 	
-	-- 第二條線 (Point3 -> Point4)
 	local line2Vector = Point4 - Point3
 	local line2Length = line2Vector.Magnitude
 	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
@@ -62,40 +63,35 @@ local function arrangeItems()
 	local currentItemIndex = 1
 	local totalItems = #validItems
 	
-	-- 沿第一條路徑排列
+	-- 排列第一條線
 	for i = 0, countLine1 do
 		if currentItemIndex > totalItems then break end
-		
 		local alpha = (i * BLOCK_SIZE) / line1Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point1:Lerp(Point2, alpha)
 		local item = validItems[currentItemIndex]
 		
-		forceSetPosition(item, spawnPos)
-		print(string.format("已成功放置 [%s] 到路徑一，座標: (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
-		
+		moveModelByHead(item, spawnPos)
+		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	-- 沿第二條路徑排列
+	-- 排列第二條線
 	for i = 0, countLine2 do
 		if currentItemIndex > totalItems then break end
-		
 		local alpha = (i * BLOCK_SIZE) / line2Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point3:Lerp(Point4, alpha)
 		local item = validItems[currentItemIndex]
 		
-		forceSetPosition(item, spawnPos)
-		print(string.format("已成功放置 [%s] 到路徑二，座標: (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
-		
+		moveModelByHead(item, spawnPos)
+		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
 	print("排列完成！")
 end
 
--- 執行排列
 arrangeItems()

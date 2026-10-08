@@ -21,11 +21,11 @@ for _, item in ipairs(itemsToArrange) do
 end
 
 -- 2. 定義四個關鍵座標點
-local Point1 = Vector3.new(596.51, 900.00, 785.83) -- 第一座標點
-local Point2 = Vector3.new(596.69, 900.00, 715.76) -- 第二座標點
+local Point1 = Vector3.new(596.51, 1147.00, 785.83) -- 第一座標點
+local Point2 = Vector3.new(596.69, 1147.00, 715.76) -- 第二座標點
 
-local Point3 = Vector3.new(614.35, 900.00, 782.40) -- 第三座標點
-local Point4 = Vector3.new(614.96, 900.00, 715.58) -- 第四座標點
+local Point3 = Vector3.new(614.35, 1147.00, 782.40) -- 第三座標點
+local Point4 = Vector3.new(614.96, 1147.00, 715.58) -- 第四座標點
 
 local BLOCK_SIZE = 5 -- 每格單位大小 (5x1x5)
 

@@ -1,98 +1,88 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本
+-- 強制精準定位腳本（無視碰撞與物理排擠）
 -- =========================================================
 
--- 1. 設定要排列的模型/物件清單（請確保這些物件放在 Workspace 中）
 local itemsToArrange = {
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
 	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
-	-- 如果有其他物件，可以繼續加在這裡，例如：
-	-- game.Workspace:FindFirstChild("GetHEXGun"),
 }
 
--- 過濾掉未找到的 nil 物件
 local validItems = {}
 for _, item in ipairs(itemsToArrange) do
-	if item then
-		table.insert(validItems, item)
-	end
+	if item then table.insert(validItems, item) end
 end
 
--- 2. 定義四個關鍵座標點
-local Point1 = Vector3.new(596.51, 1100.00, 785.83) -- 第一座標點
-local Point2 = Vector3.new(596.69, 1100.00, 715.76) -- 第二座標點
+-- 指定準確高度 Y
+local TARGET_Y = 1206.5
 
-local Point3 = Vector3.new(614.35, 1100.00, 782.40) -- 第三座標點
-local Point4 = Vector3.new(614.96, 1100.00, 715.58) -- 第四座標點
+local Point1 = Vector3.new(596.51, TARGET_Y, 785.83)
+local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
+local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
+local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
-local BLOCK_SIZE = 5 -- 每格單位大小 (5x1x5)
+local BLOCK_SIZE = 5
 
--- 移動物件至目標 CFrame 的函式
-local function setModelPosition(targetModel, targetPosition)
-	if targetModel:IsA("Model") then
-		if targetModel.PrimaryPart then
-			targetModel:SetPrimaryPartCFrame(CFrame.new(targetPosition))
-		else
-			targetModel:MoveTo(targetPosition)
+-- 強制放置函式
+local function forceSetPosition(target, targetPos)
+	-- 遍歷所有 BasePart 暫時關閉碰撞並固定，防止物理推高
+	for _, part in ipairs(target:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part.Anchored = true
 		end
-	elseif targetModel:IsA("BasePart") then
-		targetModel.CFrame = CFrame.new(targetPosition)
+	end
+	
+	-- 使用 PivotTo 強制指定精確 CFrame (不使用會自動抬升高度的 MoveTo)
+	if target:IsA("Model") then
+		target:PivotTo(CFrame.new(targetPos))
+	elseif target:IsA("BasePart") then
+		target.CFrame = CFrame.new(targetPos)
 	end
 end
 
--- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始自動排列物件...")
+	print("開始強制精準定位...")
 	
-	-- 計算第一條線 (Point1 -> Point2) 的方向與總長度
-	local line1Dir = (Point2 - Point1)
-	local line1Length = line1Dir.Magnitude
+	local line1Vector = Point2 - Point1
+	local line1Length = line1Vector.Magnitude
 	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
 	
-	-- 計算第二條線 (Point3 -> Point4) 的方向與總長度
-	local line2Dir = (Point4 - Point3)
-	local line2Length = line2Dir.Magnitude
+	local line2Vector = Point4 - Point3
+	local line2Length = line2Vector.Magnitude
 	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
 	
 	local currentItemIndex = 1
 	local totalItems = #validItems
 	
-	-- 先排列第一條線
+	-- 排列路徑一
 	for i = 0, countLine1 do
 		if currentItemIndex > totalItems then break end
-		
 		local alpha = (i * BLOCK_SIZE) / line1Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point1:Lerp(Point2, alpha)
 		local item = validItems[currentItemIndex]
 		
-		setModelPosition(item, spawnPos)
-		print(string.format("已放置物件 %s 到第一條線，位置: %s", item.Name, tostring(spawnPos)))
-		
+		forceSetPosition(item, spawnPos)
+		print(string.format("已強制放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	-- 若還有剩餘物件，繼續排列第二條線
+	-- 排列路徑二
 	for i = 0, countLine2 do
 		if currentItemIndex > totalItems then break end
-		
 		local alpha = (i * BLOCK_SIZE) / line2Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point3:Lerp(Point4, alpha)
 		local item = validItems[currentItemIndex]
 		
-		setModelPosition(item, spawnPos)
-		print(string.format("已放置物件 %s 到第二條線，位置: %s", item.Name, tostring(spawnPos)))
-		
+		forceSetPosition(item, spawnPos)
+		print(string.format("已強制放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
-	
-	print("所有物件排列完成！")
 end
 
--- 執行排列
 arrangeItems()

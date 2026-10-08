@@ -1,139 +1,31 @@
--- ====================================================================
--- [除錯相容版] Monster ESP & TP (強制顯示 GUI)
--- ====================================================================
-
-local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
 
-local Player = Players.LocalPlayer
-local PlayerGui = Player:WaitForChild("PlayerGui")
-
--- 優先順序：PlayerGui -> CoreGui (防止部分執行器權限問題)
-local TargetParent = PlayerGui
-
-if TargetParent:FindFirstChild("MonsterESP_TP_GUI_V3") then
-    TargetParent.MonsterESP_TP_GUI_V3:Destroy()
-end
-
--- 1. 目標怪物清單 (若不確定名稱，可將下方的 AutoDetectMonsters 改為 true)
-local TARGET_MONSTERS = {
-    ["Reaper"] = true,
-    ["Jack O' Lantern"] = true,
-    ["Zombie Brute"] = true
+-- 1. 怪物配置清單（包含圖片上的三隻怪物）
+local MONSTERS = {
+	{ name = "Reaper", label = "Reaper" },
+	{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
+	{ name = "Zombie Brute", label = "Zombie Brute" }
 }
 
-local Config = {
-    TeleportOffsetY = 20,
-    ESPEnabled = true,
-    AutoDetectMonsters = true -- 自動偵測所有帶有 Humanoid 的 NPC/怪物
-}
-
-local ActiveESPList = {}
-local MonsterButtons = {}
-local ScrollFrameRef = nil
-local UIListLayoutRef = nil
-local EspButtonRef = nil
-
-local function GetMonsterHealth(monsterModel)
-    local humanoid = monsterModel:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        return humanoid.Health, humanoid.MaxHealth
-    end
-    return nil, nil
+-- 2. 防止重複創建 UI (安全掛載至 PlayerGui 或 CoreGui)
+local TargetParent = LocalPlayer:WaitForChild("PlayerGui")
+if gethui then
+	TargetParent = gethui()
+elseif syn and syn.protect_gui then
+	TargetParent = CoreGui
 end
 
-local function TeleportToMonster(monsterModel)
-    local char = Player.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    
-    local targetPart = monsterModel:FindFirstChild("HumanoidRootPart") 
-        or monsterModel.PrimaryPart 
-        or monsterModel:FindFirstChildWhichIsA("BasePart")
-        
-    if targetPart then
-        char.HumanoidRootPart.CFrame = targetPart.CFrame + Vector3.new(0, Config.TeleportOffsetY, 0)
-        print("[TP] 傳送成功: " .. monsterModel.Name)
-    end
+if TargetParent:FindFirstChild("Area51TP_GUI_V2") then
+	TargetParent:FindFirstChild("Area51TP_GUI_V2"):Destroy()
 end
 
-local function CreateESP(monsterModel)
-    if ActiveESPList[monsterModel] then return end
-
-    local head = monsterModel:FindFirstChild("Head") 
-        or monsterModel:FindFirstChild("HumanoidRootPart") 
-        or monsterModel.PrimaryPart 
-        or monsterModel:FindFirstChildWhichIsA("BasePart")
-        
-    if not head then return end
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "MonsterESP"
-    billboard.Adornee = head
-    billboard.Size = UDim2.new(0, 160, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
-    billboard.AlwaysOnTop = true
-
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Parent = billboard
-    nameLabel.Size = UDim2.new(1, 0, 1, 0)
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
-    nameLabel.TextStrokeTransparency = 0
-    nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    nameLabel.TextScaled = true
-    nameLabel.Font = Enum.Font.SourceSansBold
-
-    billboard.Parent = monsterModel
-    ActiveESPList[monsterModel] = billboard
-end
-
-local function RemoveESP(monsterModel)
-    if ActiveESPList[monsterModel] then
-        ActiveESPList[monsterModel]:Destroy()
-        ActiveESPList[monsterModel] = nil
-    end
-end
-
-local function UpdateCanvasSize()
-    if ScrollFrameRef and UIListLayoutRef then
-        ScrollFrameRef.CanvasSize = UDim2.new(0, 0, 0, UIListLayoutRef.AbsoluteContentSize.Y + 15)
-    end
-end
-
-local function AddMonsterTPButton(monsterModel)
-    if MonsterButtons[monsterModel] or not ScrollFrameRef then return end
-
-    local btn = Instance.new("TextButton")
-    btn.Name = monsterModel.Name .. "_Btn"
-    btn.Parent = ScrollFrameRef
-    btn.Size = UDim2.new(1, -8, 0, 30)
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-    btn.BorderSizePixel = 0
-    btn.Text = "⚔️ 傳送至: " .. monsterModel.Name
-    btn.TextColor3 = Color3.fromRGB(240, 240, 240)
-    btn.TextSize = 13
-    btn.Font = Enum.Font.SourceSans
-
-    btn.MouseButton1Click:Connect(function()
-        TeleportToMonster(monsterModel)
-    end)
-
-    MonsterButtons[monsterModel] = btn
-    UpdateCanvasSize()
-end
-
-local function RemoveMonsterTPButton(monsterModel)
-    if MonsterButtons[monsterModel] then
-        MonsterButtons[monsterModel]:Destroy()
-        MonsterButtons[monsterModel] = nil
-        UpdateCanvasSize()
-    end
-end
-
--- 建立主介面
+-- 3. 建立主 UI ( ScreenGui & MainFrame )
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "MonsterESP_TP_GUI_V3"
+ScreenGui.Name = "Area51TP_GUI_V2"
 ScreenGui.Parent = TargetParent
 ScreenGui.ResetOnSpawn = false
 
@@ -142,121 +34,304 @@ MainFrame.Name = "MainFrame"
 MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
 MainFrame.BorderSizePixel = 0
-MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
-MainFrame.Size = UDim2.new(0, 260, 0, 380)
+MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
+MainFrame.Size = UDim2.new(0, 280, 0, 380)
 MainFrame.Active = true
 MainFrame.Draggable = true
 
-local Title = Instance.new("TextLabel")
-Title.Parent = MainFrame
-Title.Size = UDim2.new(1, 0, 0, 36)
-Title.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
-Title.BorderSizePixel = 0
-Title.Text = "怪物偵測控制台 (V3)"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 16
-Title.Font = Enum.Font.SourceSansBold
+-- 圓角與外邊框裝飾
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainFrame
 
-local espBtn = Instance.new("TextButton")
-espBtn.Name = "ESP_Toggle_Btn"
-espBtn.Parent = MainFrame
-espBtn.Position = UDim2.new(0, 5, 0, 42)
-espBtn.Size = UDim2.new(1, -10, 0, 32)
-espBtn.BackgroundColor3 = Color3.fromRGB(40, 150, 60)
-espBtn.BorderSizePixel = 0
-espBtn.Font = Enum.Font.SourceSansBold
-espBtn.TextSize = 14
-espBtn.Text = "👁️ ESP 狀態: 已開啟"
-espBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(50, 50, 55)
+MainStroke.Thickness = 1.5
+MainStroke.Parent = MainFrame
 
-espBtn.MouseButton1Click:Connect(function()
-    Config.ESPEnabled = not Config.ESPEnabled
-    if Config.ESPEnabled then
-        espBtn.Text = "👁️ ESP 狀態: 已開啟"
-        espBtn.BackgroundColor3 = Color3.fromRGB(40, 150, 60)
-    else
-        espBtn.Text = "👁️ ESP 狀態: 已關閉"
-        espBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
-        for m, _ in pairs(ActiveESPList) do RemoveESP(m) end
-    end
-end)
+-- 標題欄
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "Title"
+TitleLabel.Size = UDim2.new(1, 0, 0, 40)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "怪物監聽與傳送面板"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextSize = 16
+TitleLabel.Font = Enum.Font.SourceSansBold
+TitleLabel.Parent = MainFrame
 
-local SubHeader = Instance.new("TextLabel")
-SubHeader.Parent = MainFrame
-SubHeader.Position = UDim2.new(0, 5, 0, 78)
-SubHeader.Size = UDim2.new(1, -10, 0, 24)
-SubHeader.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-SubHeader.BorderSizePixel = 0
-SubHeader.Text = "  👾 場上怪物/NPC 一覽"
-SubHeader.TextColor3 = Color3.fromRGB(255, 215, 0)
-SubHeader.TextSize = 13
-SubHeader.TextXAlignment = Enum.TextXAlignment.Left
-SubHeader.Font = Enum.Font.SourceSansBold
+-- 分隔線
+local Line = Instance.new("Frame")
+Line.Size = UDim2.new(1, -20, 0, 1)
+Line.Position = UDim2.new(0, 10, 0, 40)
+Line.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+Line.BorderSizePixel = 0
+Line.Parent = MainFrame
 
-local Scroll = Instance.new("ScrollingFrame")
-Scroll.Parent = MainFrame
-Scroll.Position = UDim2.new(0, 5, 0, 106)
-Scroll.Size = UDim2.new(1, -10, 1, -112)
-Scroll.BackgroundTransparency = 1
-Scroll.BorderSizePixel = 0
-Scroll.ScrollBarThickness = 6
-ScrollFrameRef = Scroll
+-- 滾動清單區域
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Name = "MonsterList"
+ScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+ScrollFrame.Size = UDim2.new(1, -20, 1, -60)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 4
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScrollFrame.Parent = MainFrame
 
 local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Parent = Scroll
+UIListLayout.Parent = ScrollFrame
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 4)
-UIListLayoutRef = UIListLayout
+UIListLayout.Padding = UDim.new(0, 10)
 
--- 判斷並註冊物件
-local function CheckAndRegisterMonster(child)
-    if not child:IsA("Model") or child == Player.Character then return end
-    
-    local isTarget = TARGET_MONSTERS[child.Name]
-    local isHumanoid = Config.AutoDetectMonsters and child:FindFirstChildOfClass("Humanoid")
-
-    if isTarget or isHumanoid then
-        print("[偵測到位] " .. child.Name)
-        if Config.ESPEnabled then CreateESP(child) end
-        AddMonsterTPButton(child)
-
-        child.Destroying:Connect(function()
-            RemoveESP(child)
-            RemoveMonsterTPButton(child)
-        end)
-    end
-end
-
-for _, child in ipairs(Workspace:GetChildren()) do
-    CheckAndRegisterMonster(child)
-end
-
-Workspace.ChildAdded:Connect(CheckAndRegisterMonster)
-
--- 即時距離更新
-RunService.RenderStepped:Connect(function()
-    if not Config.ESPEnabled then return end
-    local char = Player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-
-    for monsterModel, billboard in pairs(ActiveESPList) do
-        if monsterModel and monsterModel.Parent and Config.ESPEnabled then
-            local health, maxHealth = GetMonsterHealth(monsterModel)
-            local textLabel = billboard:FindFirstChildOfClass("TextLabel")
-            
-            if textLabel and health then
-                local distStr = ""
-                local targetPart = monsterModel:FindFirstChild("HumanoidRootPart") or monsterModel.PrimaryPart
-                if hrp and targetPart then
-                    local dist = math.floor((hrp.Position - targetPart.Position).Magnitude)
-                    distStr = string.format(" [%dm]", dist)
-                end
-                textLabel.Text = string.format("%s%s\nHP: %d / %d", monsterModel.Name, distStr, math.floor(health), math.floor(maxHealth))
-            end
-        else
-            RemoveESP(monsterModel)
-        end
-    end
+UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
 end)
 
-print("V3 主介面已渲染完成！")
+---------------------------------------------------------
+-- 4. 邏輯核心：怪物搜尋、ESP(含血量)、傳送
+---------------------------------------------------------
+
+-- 搜尋怪物模型
+local function findMonster(monsterName)
+	local monster = Workspace:FindFirstChild(monsterName)
+	if monster then return monster end
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child.Name == monsterName then
+			return child
+		end
+	end
+	return nil
+end
+
+-- ESP高亮與BillboardGui (顯示名稱與血量)
+local function applyESP(monster, enable)
+	if not monster then return end
+	
+	local existingHighlight = monster:FindFirstChild("MonsterESP_Highlight")
+	local existingBillboard = monster:FindFirstChild("MonsterESP_Billboard")
+
+	if enable then
+		-- 高亮外框
+		if not existingHighlight then
+			local highlight = Instance.new("Highlight")
+			highlight.Name = "MonsterESP_Highlight"
+			highlight.FillColor = Color3.fromRGB(255, 50, 50)
+			highlight.FillTransparency = 0.5
+			highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+			highlight.OutlineTransparency = 0
+			highlight.Parent = monster
+		end
+
+		-- 頭頂血量顯示牌
+		if not existingBillboard then
+			local head = monster:FindFirstChild("Head") or monster:FindFirstChild("HumanoidRootPart") or monster.PrimaryPart
+			if head then
+				local bb = Instance.new("BillboardGui")
+				bb.Name = "MonsterESP_Billboard"
+				bb.Adornee = head
+				bb.Size = UDim2.new(0, 150, 0, 45)
+				bb.StudsOffset = Vector3.new(0, 3.5, 0)
+				bb.AlwaysOnTop = true
+
+				local nameText = Instance.new("TextLabel")
+				nameText.Name = "NameLabel"
+				nameText.Size = UDim2.new(1, 0, 0, 20)
+				nameText.BackgroundTransparency = 1
+				nameText.Text = monster.Name
+				nameText.TextColor3 = Color3.fromRGB(255, 255, 255)
+				nameText.TextStrokeTransparency = 0
+				nameText.Font = Enum.Font.SourceSansBold
+				nameText.TextSize = 14
+				nameText.Parent = bb
+
+				local hpText = Instance.new("TextLabel")
+				hpText.Name = "HPLabel"
+				hpText.Position = UDim2.new(0, 0, 0, 20)
+				hpText.Size = UDim2.new(1, 0, 0, 20)
+				hpText.BackgroundTransparency = 1
+				hpText.TextColor3 = Color3.fromRGB(50, 255, 100)
+				hpText.TextStrokeTransparency = 0
+				hpText.Font = Enum.Font.SourceSans
+				hpText.TextSize = 13
+				hpText.Parent = bb
+
+				bb.Parent = monster
+			end
+		end
+	else
+		if existingHighlight then existingHighlight:Destroy() end
+		if existingBillboard then existingBillboard:Destroy() end
+	end
+end
+
+-- 實時更新血量文字
+RunService.RenderStepped:Connect(function()
+	for _, config in ipairs(MONSTERS) do
+		local monster = findMonster(config.name)
+		if monster then
+			local bb = monster:FindFirstChild("MonsterESP_Billboard")
+			if bb and bb:FindFirstChild("HPLabel") then
+				local humanoid = monster:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					local hp = math.max(0, math.floor(humanoid.Health))
+					local maxHp = math.floor(humanoid.MaxHealth)
+					bb.HPLabel.Text = string.format("HP: %d / %d", hp, maxHp)
+					
+					-- 低血量自動變色
+					local pct = hp / math.max(1, maxHp)
+					bb.HPLabel.TextColor3 = Color3.fromHSV(pct * 0.3, 1, 1)
+				else
+					bb.HPLabel.Text = "HP: N/A"
+				end
+			end
+		end
+	end
+end)
+
+-- 5. 動態生成各怪物的 UI 欄位
+local UI_Rows = {}
+
+for _, config in ipairs(MONSTERS) do
+	local Row = Instance.new("Frame")
+	Row.Name = config.name .. "_Row"
+	Row.Size = UDim2.new(1, 0, 0, 85)
+	Row.BackgroundColor3 = Color3.fromRGB(38, 38, 42)
+	Row.BorderSizePixel = 0
+	Row.Parent = ScrollFrame
+
+	local RowCorner = Instance.new("UICorner")
+	RowCorner.CornerRadius = UDim.new(0, 8)
+	RowCorner.Parent = Row
+
+	-- 怪物名稱
+	local NameLabel = Instance.new("TextLabel")
+	NameLabel.Name = "MonsterName"
+	NameLabel.Position = UDim2.new(0, 10, 0, 8)
+	NameLabel.Size = UDim2.new(1, -20, 0, 22)
+	NameLabel.BackgroundTransparency = 1
+	NameLabel.Text = config.label
+	NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	NameLabel.Font = Enum.Font.SourceSansBold
+	NameLabel.TextSize = 16
+	NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	NameLabel.Parent = Row
+
+	-- ESP 按鈕
+	local EspBtn = Instance.new("TextButton")
+	EspBtn.Name = "EspButton"
+	EspBtn.Position = UDim2.new(0, 10, 0, 38)
+	EspBtn.Size = UDim2.new(0.45, -5, 0, 35)
+	EspBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+	EspBtn.Text = "ESP: 關"
+	EspBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	EspBtn.Font = Enum.Font.SourceSans
+	EspBtn.TextSize = 14
+	EspBtn.Parent = Row
+
+	local EspCorner = Instance.new("UICorner")
+	EspCorner.CornerRadius = UDim.new(0, 6)
+	EspCorner.Parent = EspBtn
+
+	-- 傳送到上方按鈕
+	local TpBtn = Instance.new("TextButton")
+	TpBtn.Name = "TpButton"
+	TpBtn.Position = UDim2.new(0.45, 5, 0, 38)
+	TpBtn.Size = UDim2.new(0.55, -15, 0, 35)
+	TpBtn.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
+	TpBtn.Text = "傳送到上方"
+	TpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	TpBtn.Font = Enum.Font.SourceSansBold
+	TpBtn.TextSize = 14
+	TpBtn.Parent = Row
+
+	local TpCorner = Instance.new("UICorner")
+	TpCorner.CornerRadius = UDim.new(0, 6)
+	TpCorner.Parent = TpBtn
+
+	-- 按鈕點擊綁定
+	local espEnabled = false
+
+	EspBtn.MouseButton1Click:Connect(function()
+		local monster = findMonster(config.name)
+		if monster then
+			espEnabled = not espEnabled
+			EspBtn.Text = espEnabled and "ESP: 開" or "ESP: 關"
+			EspBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(40, 160, 80) or Color3.fromRGB(50, 50, 55)
+			applyESP(monster, espEnabled)
+		end
+	end)
+
+	TpBtn.MouseButton1Click:Connect(function()
+		local monster = findMonster(config.name)
+		if monster and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+			local targetCFrame = monster:GetPivot()
+			LocalPlayer.Character.HumanoidRootPart.CFrame = targetCFrame * CFrame.new(0, 10, 0)
+		end
+	end)
+
+	-- 記錄 UI 引用以供狀態更新
+	UI_Rows[config.name] = {
+		Row = Row,
+		NameLabel = NameLabel,
+		EspBtn = EspBtn,
+		TpBtn = TpBtn,
+		GetEspState = function() return espEnabled end
+	}
+end
+
+-- 6. 監聽與狀態刷新（亮起 vs 黯淡/不可點擊）
+local function updateUIStates()
+	for _, config in ipairs(MONSTERS) do
+		local data = UI_Rows[config.name]
+		if data then
+			local monster = findMonster(config.name)
+			local isAlive = (monster ~= nil)
+
+			if isAlive then
+				-- 有怪物：亮起且可點擊
+				data.Row.BackgroundTransparency = 0
+				data.NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+				
+				data.EspBtn.Active = true
+				data.EspBtn.AutoButtonColor = true
+				data.EspBtn.TextTransparency = 0
+				
+				data.TpBtn.Active = true
+				data.TpBtn.AutoButtonColor = true
+				data.TpBtn.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
+				data.TpBtn.TextTransparency = 0
+				
+				-- 重新應用 ESP 狀態（防止怪物重新生成後 ESP 消失）
+				if data.GetEspState() then
+					applyESP(monster, true)
+				end
+			else
+				-- 無怪物：變黯淡且不能按
+				data.Row.BackgroundTransparency = 0.5
+				data.NameLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
+				
+				data.EspBtn.Active = false
+				data.EspBtn.AutoButtonColor = false
+				data.EspBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+				data.EspBtn.TextTransparency = 0.5
+				
+				data.TpBtn.Active = false
+				data.TpBtn.AutoButtonColor = false
+				data.TpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+				data.TpBtn.TextTransparency = 0.5
+			end
+		end
+	end
+end
+
+-- 初始刷新與 Workspace 變動監聽
+updateUIStates()
+
+Workspace.ChildAdded:Connect(function(child)
+	updateUIStates()
+end)
+
+Workspace.ChildRemoved:Connect(function(child)
+	updateUIStates()
+end)

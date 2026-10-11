@@ -1,16 +1,17 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (已加入 Exit)
+-- Roblox 物件沿座標路徑自動排列腳本 (修正 Workspace 直接子物件)
 -- =========================================================
 
--- 1. 設定要排列的模型/物件清單（包含新加入的 Exit）
+-- 1. 設定要排列的模型/物件清單
 local itemsToArrange = {
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
 	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
-	game.Workspace:FindFirstChild("Exit"), -- 新加入的 Exit 物件
+	game.Workspace:FindFirstChild("Exit"), -- 直接抓 Workspace 底下的 Exit
 }
 
+-- 過濾掉找不到的物件
 local validItems = {}
 for _, item in ipairs(itemsToArrange) do
 	if item then table.insert(validItems, item) end
@@ -26,31 +27,37 @@ local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
 local BLOCK_SIZE = 5
 
--- 核心：直接移動 Head 或自身的定位函式
-local function moveModelByHead(model, targetPos)
+-- 通用定位函式（同時支援 Model 與單獨的 BasePart）
+local function placeItem(item, targetPos)
 	-- 關閉所有碰撞，防物理自動升降
-	for _, part in ipairs(model:GetDescendants()) do
+	for _, part in ipairs(item:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.CanCollide = false
 			part.Anchored = true
 		end
 	end
+	if item:IsA("BasePart") then
+		item.CanCollide = false
+		item.Anchored = true
+	end
 	
-	local mainPart = model:FindFirstChild("Head") or model.PrimaryPart or model:FindFirstChildOfClass("BasePart")
-	
-	if mainPart then
-		if model:IsA("Model") then
-			model.PrimaryPart = mainPart
-			model:SetPrimaryPartCFrame(CFrame.new(targetPos))
+	-- 判斷是 Model 還是單一 Part
+	if item:IsA("Model") then
+		local mainPart = item:FindFirstChild("Head") or item.PrimaryPart or item:FindFirstChildOfClass("BasePart")
+		if mainPart then
+			item.PrimaryPart = mainPart
+			item:SetPrimaryPartCFrame(CFrame.new(targetPos))
 		else
-			mainPart.CFrame = CFrame.new(targetPos)
+			item:PivotTo(CFrame.new(targetPos))
 		end
+	elseif item:IsA("BasePart") then
+		item.CFrame = CFrame.new(targetPos)
 	end
 end
 
 -- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始依照 Head 精準定位 (Y = 1148)...")
+	print("開始進行物件自動排列...")
 	
 	local line1Vector = Point2 - Point1
 	local line1Length = line1Vector.Magnitude
@@ -72,7 +79,7 @@ local function arrangeItems()
 		local spawnPos = Point1:Lerp(Point2, alpha)
 		local item = validItems[currentItemIndex]
 		
-		moveModelByHead(item, spawnPos)
+		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
@@ -86,12 +93,12 @@ local function arrangeItems()
 		local spawnPos = Point3:Lerp(Point4, alpha)
 		local item = validItems[currentItemIndex]
 		
-		moveModelByHead(item, spawnPos)
+		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	print("排列完成！")
+	print("全部排列完成！")
 end
 
 arrangeItems()

@@ -1,13 +1,14 @@
 -- =========================================================
--- 精準控制 Head 座標的排列腳本 (高度 Y = 1148)
+-- Roblox 物件沿座標路徑自動排列腳本 (已加入 Exit)
 -- =========================================================
 
--- 1. 設定要排列的模型/物件清單
+-- 1. 設定要排列的模型/物件清單（包含新加入的 Exit）
 local itemsToArrange = {
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
 	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
+	game.Workspace:FindFirstChild("Exit"), -- 新加入的 Exit 物件
 }
 
 local validItems = {}
@@ -25,7 +26,7 @@ local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
 local BLOCK_SIZE = 5
 
--- 核心：直接移動 Head，並讓其他附屬元件 (GUI, Attachment) 自動跟隨
+-- 核心：直接移動 Head 或自身的定位函式
 local function moveModelByHead(model, targetPos)
 	-- 關閉所有碰撞，防物理自動升降
 	for _, part in ipairs(model:GetDescendants()) do
@@ -38,7 +39,6 @@ local function moveModelByHead(model, targetPos)
 	local mainPart = model:FindFirstChild("Head") or model.PrimaryPart or model:FindFirstChildOfClass("BasePart")
 	
 	if mainPart then
-		-- 如果 Model 沒有設定 PrimaryPart，動態把它指定為 Head
 		if model:IsA("Model") then
 			model.PrimaryPart = mainPart
 			model:SetPrimaryPartCFrame(CFrame.new(targetPos))
@@ -73,7 +73,7 @@ local function arrangeItems()
 		local item = validItems[currentItemIndex]
 		
 		moveModelByHead(item, spawnPos)
-		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
+		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
@@ -87,7 +87,7 @@ local function arrangeItems()
 		local item = validItems[currentItemIndex]
 		
 		moveModelByHead(item, spawnPos)
-		print(string.format("已放置 [%s] Head 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
+		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	

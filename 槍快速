@@ -1,0 +1,703 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+]]
+--Notify by UltraSkidding, all main script ,by me , some changes make Hackerai.co, i can scripting but it makes script better work, so, ust unequip all weapon and wait, idk
+local AkaliNotif = loadstring([=[-- original -> https://raw.githubusercontent.com/Kinlei/Dynissimo/main/Scripts/AkaliNotif.lua
+
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local TextService = game:GetService("TextService")
+local Player = game:GetService("Players").LocalPlayer
+
+local NotifGui = Instance.new("ScreenGui")
+NotifGui.Name = "AkaliNotif"
+NotifGui.Parent = RunService:IsStudio() and Player.PlayerGui or game:GetService("CoreGui")
+
+-- ==================== НАСТРОЙКА ПОЗИЦИЙ ====================
+local PositionsConfig = {
+	TopLeft     = {Anchor = Vector2.new(0, 0),   Pos = UDim2.new(0, 20, 0, 20),   Reverse = false, SlideX = -1},
+	TopRight    = {Anchor = Vector2.new(1, 0),   Pos = UDim2.new(1, -20, 0, 20),  Reverse = false, SlideX = 1},
+	DownLeft    = {Anchor = Vector2.new(0, 1),   Pos = UDim2.new(0, 20, 1, -20),  Reverse = true,  SlideX = -1},
+	DownRight   = {Anchor = Vector2.new(1, 1),   Pos = UDim2.new(1, -20, 1, -20), Reverse = true,  SlideX = 1},
+	CenterLeft  = {Anchor = Vector2.new(0, 0.5), Pos = UDim2.new(0, 20, 0.5, 0),  Reverse = false, SlideX = -1},
+	CenterRight = {Anchor = Vector2.new(1, 0.5), Pos = UDim2.new(1, -20, 0.5, 0), Reverse = false, SlideX = 1},
+	CenterTop   = {Anchor = Vector2.new(0.5, 0), Pos = UDim2.new(0.5, 0, 0, 20),  Reverse = false, SlideX = 1},
+	CenterDown  = {Anchor = Vector2.new(0.5, 1), Pos = UDim2.new(0.5, 0, 1, -20), Reverse = true,  SlideX = 1},
+}
+
+local Containers = {}
+
+for posName, cfg in pairs(PositionsConfig) do
+	local Container = Instance.new("Frame")
+	Container.Name = "Container_" .. posName
+	Container.BackgroundTransparency = 1
+	Container.AnchorPoint = cfg.Anchor
+	Container.Position = cfg.Pos
+	Container.Size = UDim2.new(0, 300, 1, -80)   -- ширина 300, почти на всю высоту
+	Container.Parent = NotifGui
+
+	Containers[posName] = {
+		Frame = Container,
+		InstructionObjects = {},
+		CachedObjects = {},
+		LastTick = tick(),
+		Reverse = cfg.Reverse,
+		SlideX = cfg.SlideX,
+	}
+end
+
+-- ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+local function Image(ID, Button)
+	local NewImage = Instance.new(string.format("Image%s", Button and "Button" or "Label"))
+	NewImage.Image = ID
+	NewImage.BackgroundTransparency = 1
+	return NewImage
+end
+
+local function Round2px()
+	local NewImage = Image("http://www.roblox.com/asset/?id=5761488251")
+	NewImage.ScaleType = Enum.ScaleType.Slice
+	NewImage.SliceCenter = Rect.new(2, 2, 298, 298)
+	NewImage.ImageColor3 = Color3.fromRGB(30, 30, 30)
+	return NewImage
+end
+
+local function Shadow2px()
+	local NewImage = Image("http://www.roblox.com/asset/?id=5761498316")
+	NewImage.ScaleType = Enum.ScaleType.Slice
+	NewImage.SliceCenter = Rect.new(17, 17, 283, 283)
+	NewImage.Size = UDim2.fromScale(1, 1) + UDim2.fromOffset(30, 30)
+	NewImage.Position = -UDim2.fromOffset(15, 15)
+	NewImage.ImageColor3 = Color3.fromRGB(30, 30, 30)
+	return NewImage
+end
+
+local Padding = 10
+local DescriptionPadding = 10
+local TweenTime = 1
+local TweenStyle = Enum.EasingStyle.Sine
+local TweenDirection = Enum.EasingDirection.Out
+
+local function CalculateBounds(TableOfObjects)
+	local X, Y = 0, 0
+	for _, Object in next, TableOfObjects or {} do
+		X += Object.AbsoluteSize.X
+		Y += Object.AbsoluteSize.Y
+	end
+	return {X = X, Y = Y}
+end
+
+local TitleSettings = {Font = Enum.Font.GothamSemibold, Size = 14}
+local DescriptionSettings = {Font = Enum.Font.Gotham, Size = 14}
+local MaxWidth = 300 - Padding - DescriptionPadding
+
+local function Label(Text, Font, Size, Button)
+	local Label = Instance.new(string.format("Text%s", Button and "Button" or "Label"))
+	Label.Text = Text
+	Label.Font = Font
+	Label.TextSize = Size
+	Label.BackgroundTransparency = 1
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.RichText = true
+	Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	return Label
+end
+
+local function TitleLabel(Text) return Label(Text, TitleSettings.Font, TitleSettings.Size) end
+local function DescriptionLabel(Text) return Label(Text, DescriptionSettings.Font, DescriptionSettings.Size) end
+
+local PropertyTweenOut = {Text = "TextTransparency", Fram = "BackgroundTransparency", Imag = "ImageTransparency"}
+
+local function FadeProperty(Object)
+	local Prop = PropertyTweenOut[string.sub(Object.ClassName, 1, 4)]
+	TweenService:Create(Object, TweenInfo.new(0.25, TweenStyle, TweenDirection), {[Prop] = 1}):Play()
+end
+
+local function FindIndexByDependency(Table, Dependency)
+	for Index, Object in next, Table do
+		if typeof(Object) == "table" then
+			for _, v in next, Object do
+				if v == Dependency then return Index end
+			end
+		elseif Object == Dependency then
+			return Index
+		end
+	end
+end
+
+local function ResetObjects(objs)
+	for _, Object in next, objs do
+		Object[2] = 0
+		Object[3] = false
+	end
+end
+
+local function FadeOutAfter(Object, Seconds, InstructionObjects)
+	wait(Seconds)
+	FadeProperty(Object)
+	for _, SubObj in next, Object:GetDescendants() do
+		FadeProperty(SubObj)
+	end
+	wait(0.25)
+	table.remove(InstructionObjects, FindIndexByDependency(InstructionObjects, Object))
+	ResetObjects(InstructionObjects)
+end
+
+-- ==================== ОБНОВЛЕНИЕ ПОЗИЦИЙ (один RenderStep) ====================
+local function UpdateContainer(data)
+	local DeltaTime = tick() - data.LastTick
+	data.LastTick = tick()
+
+	local objs = data.InstructionObjects
+	local Reverse = data.Reverse
+	local PreviousObjects = {}
+
+	for i, Object in ipairs(objs) do
+		local Label, Delta, Done = Object[1], Object[2], Object[3]
+
+		if not Done then
+			if Delta < TweenTime then
+				Object[2] = math.clamp(Delta + DeltaTime, 0, 1)
+				Delta = Object[2]
+			else
+				Object[3] = true
+			end
+		end
+
+		local NewValue = TweenService:GetValue(Delta, TweenStyle, TweenDirection)
+		local CurrentPos = Label.Position
+
+		local TargetPos
+		if not Reverse then
+			-- Стэк сверху вниз
+			local offset = CalculateBounds(PreviousObjects).Y + (Padding * #PreviousObjects)
+			TargetPos = UDim2.new(0, 0, 0, offset)
+		else
+			-- Стэк снизу вверх (новые внизу, старые поднимаются вверх)
+			local totalHeight = 0
+			for j = #objs, 1, -1 do
+				local lbl = objs[j][1]
+				totalHeight += lbl.AbsoluteSize.Y + Padding
+				if objs[j] == Object then
+					TargetPos = UDim2.new(0, 0, 1, -totalHeight + Padding)
+					break
+				end
+			end
+		end
+
+		Label.Position = CurrentPos:Lerp(TargetPos, NewValue)
+		table.insert(PreviousObjects, Label)
+	end
+
+	data.CachedObjects = PreviousObjects
+end
+
+RunService:BindToRenderStep("UpdateNotifications", 0, function()
+	for _, data in pairs(Containers) do
+		UpdateContainer(data)
+	end
+end)
+
+-- ==================== ОСНОВНАЯ ФУНКЦИЯ УВЕДОМЛЕНИЙ ====================
+return {
+	Notify = function(Properties)
+		local Properties = typeof(Properties) == "table" and Properties or {}
+		local Title = Properties.Title
+		local Description = Properties.Description
+		local Duration = Properties.Duration or 5
+		local Position = Properties.Position or "TopRight"   -- ← вот сюда можно указать любую позицию
+
+		local containerData = Containers[Position]
+		if not containerData then
+			warn("[AkaliNotif] Неизвестная позиция: " .. tostring(Position) .. ". Используется TopRight.")
+			containerData = Containers.TopRight
+		end
+
+		if Title or Description then
+			local Y = Title and 26 or 0
+			if Description then
+				local TextSize = TextService:GetTextSize(Description, DescriptionSettings.Size, DescriptionSettings.Font, Vector2.new(0, 0))
+				Y += math.ceil(TextSize.X / MaxWidth) * TextSize.Y + 8
+			end
+
+			local NewLabel = Round2px()
+			NewLabel.Size = UDim2.new(1, 0, 0, Y)
+
+			-- Начальная позиция (выезд с нужной стороны)
+			local slideX = containerData.SlideX
+			local initialX = slideX
+			local initialOffsetX = slideX == -1 and -20 or 20
+
+			if containerData.Reverse then
+				-- Для нижних позиций выезжаем снизу
+				NewLabel.Position = UDim2.new(initialX, initialOffsetX, 1, 20)
+			else
+				-- Для верхних/центральных — выезжаем сбоку
+				local offsetY = CalculateBounds(containerData.CachedObjects).Y + (Padding * #containerData.InstructionObjects)
+				NewLabel.Position = UDim2.new(initialX, initialOffsetX, 0, offsetY)
+			end
+
+			if Title then
+				local NewTitle = TitleLabel(Title)
+				NewTitle.Size = UDim2.new(1, -10, 0, 26)
+				NewTitle.Position = UDim2.fromOffset(10, 0)
+				NewTitle.Parent = NewLabel
+			end
+
+			if Description then
+				local NewDescription = DescriptionLabel(Description)
+				NewDescription.TextWrapped = true
+				NewDescription.Size = UDim2.fromScale(1, 1) + UDim2.fromOffset(-DescriptionPadding, Title and -26 or 0)
+				NewDescription.Position = UDim2.fromOffset(10, Title and 26 or 0)
+				NewDescription.TextYAlignment = Enum.TextYAlignment[Title and "Top" or "Center"]
+				NewDescription.Parent = NewLabel
+			end
+
+			Shadow2px().Parent = NewLabel
+			NewLabel.Parent = containerData.Frame
+
+			table.insert(containerData.InstructionObjects, {NewLabel, 0, false})
+			coroutine.wrap(FadeOutAfter)(NewLabel, Duration, containerData.InstructionObjects)
+		end
+	end,
+}]=])();
+local Notify = AkaliNotif.Notify;
+if game.Players:FindFirstChild("TestDivo_uerAccount1") then
+	Notify({
+		Title = "You meet the Owner",
+		Description = "Ye, You meet the Owner. Enjoy",
+		Duration = 5
+	})
+end
+
+getgenv().NewSetting = {
+	FireRate = 0.05,
+    Auto = true,
+    Spread = 0,
+    LifeSteal = 100,
+    AmmoPerClip = math.huge,
+    CameraShakingEnabled = false,
+    BulletSpeed = 100,
+    BulletPerShot = 1,
+	FlamingBullet = true,
+	ExplosiveEnabled = true,
+	Radius = 50,
+	ChargingTime = 0,
+	ReloadTime = 0,
+	BurstFireEnabled = false
+}
+
+Notify({
+	Title = "Script",
+	Description = "One sec, don't equip any weapon",
+	Duration = 1
+})
+
+task.wait(1)
+
+Notify({
+	Title = "Script",
+	Description = "Done but scipt it setup your weapons, every 1 sec, enjoy",
+	Duration = 1
+})
+
+local lp = game.Players.LocalPlayer
+
+function processGun(v)
+	task.spawn(function()
+		if v:GetAttribute("HasInInventory") then return end
+		v:WaitForChild("GunScript_Local").Enabled = false
+		v:SetAttribute("HasInInventory", true)
+
+		local weaponnow = v
+		
+		local Handle = v:WaitForChild("Handle")
+		local v2 = lp:GetMouse()
+		local CurrentCamera = workspace.CurrentCamera
+		local char = workspace:WaitForChild(lp.Name)
+		local Humanoid = char:WaitForChild("Humanoid")
+		local ContextActionService = game:GetService("ContextActionService")
+		local GunSound = game.ReplicatedStorage.GunSound
+		
+		local old = require(v.Setting)
+		local newSetting = getgenv().NewSetting
+		local Setting = {}
+		for k, val in next, old do Setting[k] = val end
+		for k, val in next, newSetting do Setting[k] = val end
+		
+		local GunScript_Server = v:WaitForChild("GunScript_Server")
+		local ChangeAmmoAndClip = GunScript_Server:WaitForChild("ChangeAmmoAndClip")
+		local InflictTarget = GunScript_Server:WaitForChild("InflictTarget")
+		local Ammo = GunScript_Server:WaitForChild("Ammo")
+		local Clips = GunScript_Server:WaitForChild("Clips")
+		
+		local v4 = nil
+		local v5 = nil
+		local v6 = nil
+		local v7 = nil
+		local v8 = nil
+		local v9 = Handle
+		local v10
+		
+		if Setting.DualEnabled then
+			v10 = v:WaitForChild("Handle2", 2)
+			if v10 == nil and Setting.DualEnabled then
+				error("\"Dual\" setting is enabled but \"Handle2\" is missing!")
+			end
+		else
+			v10 = nil
+		end
+		
+		local v11 = false
+		local v12 = true
+		local v13 = false
+		local v14 = false
+		local v15 = false
+		local v16 = Ammo.Value
+		local v17 = Clips.Value
+		local MaxClip = Setting.MaxClip
+		local t = {}
+		
+		if Setting.IdleAnimationID ~= nil or Setting.DualEnabled then
+			v4 = Humanoid:LoadAnimation(v:WaitForChild("IdleAnim"))
+		end
+		if Setting.FireAnimationID ~= nil then
+			v5 = Humanoid:LoadAnimation(v:WaitForChild("FireAnim"))
+		end
+		if Setting.ReloadAnimationID ~= nil then
+			v6 = Humanoid:LoadAnimation(v:WaitForChild("ReloadAnim"))
+		end
+		if Setting.ShotgunClipinAnimationID ~= nil then
+			v7 = Humanoid:LoadAnimation(v:WaitForChild("ShotgunClipinAnim"))
+		end
+		
+		local function B(p1)
+			if p1 == nil then
+				game:GetService("RunService").Heartbeat:wait()
+			else
+				local sum = 0 + game:GetService("RunService").Heartbeat:wait()
+				while sum < p1 do
+					sum = sum + game:GetService("RunService").Heartbeat:wait()
+				end
+			end
+		end
+		
+		local function l(p1, p2, p3, p4)
+			local v1, v2 = workspace:FindPartOnRay(Ray.new(p1, p2 * p3), p4)
+			if v1 and (v1.Transparency > 0.75 or (v1.Name == "Handle" or (v1.Name == "Effect" or (v1.Name == "Bullet" or (v1.Name == "Laser" or (string.lower(v1.Name) == "water" or (v1.Name == "Rail" or (v1.Name == "Arrow" or v1.Parent:FindFirstChild("Humanoid") and v1.Parent.Humanoid.Health == 0))))))) or (v1.Parent:FindFirstChild("Humanoid") and (v1.Parent:FindFirstChild("TEAM") and (TEAM and v1.Parent.TEAM.Value == TEAM.Value)) or v1.Parent:FindFirstChild("Humanoid") and t[v1.Parent.Humanoid])) then
+				local v3, v4 = l(v2 + p2 * 0.01, p2, p3 - (p1 - v2).magnitude, p4)
+				v1 = v3
+				v2 = v4
+			end
+			return v1, v2
+		end
+		
+		local function b(p1, p2, p3, p4, p5)
+			local v1 = workspace.CurrentCamera:ViewportPointToRay(p1, p2)
+			local _, v2 = workspace:FindPartOnRay(Ray.new(v1.Origin, v1.Direction * 5000), p5)
+			local v3 = CFrame.new(v1.Origin, v2)
+			local lookVector = (v3 * CFrame.Angles(math.rad(-p3 + math.random() * (p3 * 2)), math.rad(-p3 + math.random() * (p3 * 2)), 0)).lookVector
+			local v7, v8 = workspace:FindPartOnRay(Ray.new(v1.Origin, lookVector * 5000), p5)
+			if v7 and (v7.Transparency > 0.75 or (v7.Name == "Handle" or (v7.Name == "Effect" or (v7.Name == "Bullet" or (v7.Name == "Laser" or (string.lower(v7.Name) == "water" or (v7.Name == "Rail" or (v7.Name == "Arrow" or v7.Parent:FindFirstChild("Humanoid") and v7.Parent.Humanoid.Health == 0))))))) or (v7.Parent:FindFirstChild("Humanoid") and (v7.Parent:FindFirstChild("TEAM") and (TEAM and v7.Parent.TEAM.Value == TEAM.Value)) or v7.Parent:FindFirstChild("Humanoid") and t[v7.Parent.Humanoid])) then
+				local v9, v10 = l(v8 + lookVector * 0.01, lookVector, 5000 - (v1.Origin - v8).magnitude, p5)
+				v7 = v9
+				v8 = v10
+			end
+			return v7, v8
+		end
+		
+		local function a()
+			if not Setting.CameraShakingEnabled then return end
+			local v2 = Setting.Intensity / (if v15 then Setting.MouseSensitive or 1 else 1)
+			for i = 1, 10 do
+				CurrentCamera.CoordinateFrame = CFrame.new(CurrentCamera.Focus.p) * (CurrentCamera.CoordinateFrame - CurrentCamera.CoordinateFrame.p) * CFrame.fromEulerAnglesXYZ((-v2 + math.random() * (v2 * 2)) / 100, (-v2 + math.random() * (v2 * 2)) / 100, 0) * CFrame.new(0, 0, (CurrentCamera.CoordinateFrame.p - CurrentCamera.Focus.p).magnitude)
+				B()
+			end
+		end
+		
+		local function d(p1)
+			local Piercing = Setting.Piercing
+			t = {}
+			if v5 then v5:Play(nil, nil, Setting.FireAnimationSpeed) end
+			local p = (Humanoid.Torso.CFrame * CFrame.new(0, 1.5, 0)).p
+			local v22 = Setting.Spread * (v15 and 1 - Setting.SpreadRedution or 1)
+			local v32 = CFrame.new(p, v2.Hit.p)
+			local lookVector = (v32 * CFrame.Angles(math.rad(-v22 + math.random() * (v22 * 2)), math.rad(-v22 + math.random() * (v22 * 2)), 0)).lookVector
+			
+			while Piercing >= 0 do
+				local v7, v8, v9, v10, v11, v122, v13, v14
+				if (lp.PlayerScripts:FindFirstChild("IsMobile") and lp.PlayerScripts.IsMobile.Value == false) or not lp.PlayerScripts:FindFirstChild("IsMobile") then
+					local v152, v16 = l(p, lookVector, 5000, char)
+					v7 = v16
+					v8 = v152
+				else
+					local v17, v18 = b(workspace.CurrentCamera.ViewportSize.X / 2, workspace.CurrentCamera.ViewportSize.Y / 2 * 0.8, v22, p, char)
+					v7 = v18
+					v8 = v17
+				end
+				
+				if Setting.ExplosiveEnabled then
+					local Explosion = Instance.new("Explosion")
+					Explosion.BlastRadius = Setting.Radius
+					Explosion.BlastPressure = 0
+					Explosion.Position = v7
+					Explosion.Parent = workspace.CurrentCamera
+					Explosion.Hit:connect(function(p1)
+						if not p1 or (not p1.Parent or p1.Name ~= "Torso") then return end
+						local Zombie = p1.Parent:FindFirstChildOfClass("Humanoid")
+						local Torso = p1.Parent:FindFirstChild("Torso")
+						if not (Zombie and (Zombie:IsA("Humanoid") and (Zombie.Health > 0 and Torso))) then return end
+						InflictTarget:FireServer(p1.Name, Zombie, Torso, v, lookVector)
+					end)
+					Piercing = 0
+				elseif v8 and v8.Parent then
+					local Zombie = v8.Parent:FindFirstChildOfClass("Humanoid")
+					local Torso = v8.Parent:FindFirstChild("Torso")
+					if Zombie and (Zombie:IsA("Humanoid") and (Zombie.Health > 0 and Torso)) then
+						InflictTarget:FireServer(v8.Name, Zombie, Torso, v, lookVector)
+						t[Zombie] = true
+					else
+						Piercing = 0
+					end
+				end
+				
+				local v19 = v8 and Piercing - 1 or -1
+				if v19 == -1 then
+					v9 = Setting.VisualizerEnabled
+					if v9 then
+						v10 = v7
+						Piercing = v19
+						v11 = p1
+					else
+						v10 = v7
+						v9 = false
+						Piercing = v19
+						v11 = p1
+					end
+				else
+					v10 = v7
+					v9 = false
+					Piercing = v19
+					v11 = p1
+				end
+				
+				if lp.PlayerScripts:FindFirstChild("BulletVisualizerScript") and lp.PlayerScripts.BulletVisualizerScript:FindFirstChild("Visualize") then
+					lp.PlayerScripts.BulletVisualizerScript.Visualize:Fire(nil, v11, Setting.MuzzleOffset, v10, { Setting.ExplosiveEnabled, Setting.BlastRadius, Setting.BlastPressure }, { Setting.BulletSpeed, Setting.BulletSize, Setting.BulletColor, Setting.BulletTransparency, Setting.BulletMaterial, Setting.FadeTime }, false, v9)
+				end
+				
+				local VisualizeBullet = game.ReplicatedStorage:FindFirstChild("VisualizeBullet")
+				if VisualizeBullet then
+					if Piercing == -1 then
+						v122 = Setting.VisualizerEnabled
+						if v122 then
+							v13 = p1
+							v14 = v7
+						else
+							v13 = p1
+							v14 = v7
+							v122 = false
+						end
+					else
+						v13 = p1
+						v14 = v7
+						v122 = false
+					end
+					VisualizeBullet:FireServer(v13, Setting.MuzzleOffset, v14, { Setting.ExplosiveEnabled, Setting.BlastRadius, Setting.BlastPressure }, { Setting.BulletSpeed, Setting.BulletSize, Setting.BulletColor, Setting.BulletTransparency, Setting.BulletMaterial, Setting.FadeTime }, true, v122)
+				end
+				p = v7 + lookVector * 0.01
+			end
+		end
+		
+		local function k()
+			if not v12 or (v14 or not (v17 > 0) and Setting.LimitedClipEnabled) or not (v16 < Setting.AmmoPerClip) then return end
+			v14 = true
+			if v15 then
+				workspace.CurrentCamera.FieldOfView = 70
+				lp.CameraMode = Enum.CameraMode.Classic
+				if script:FindFirstChild("Mouse Sensitivity") then script["Mouse Sensitivity"].Disabled = true end
+				v15 = false
+				if Setting.MouseIconID then v2.Icon = "rbxassetid://" .. Setting.MouseIconID end
+			end
+			if Setting.ShotgunReload then
+				for i = 1, Setting.AmmoPerClip - v16 do
+					if v7 then v7:Play(nil, nil, Setting.ShotgunClipinAnimationSpeed) end
+					GunSound:FireServer(v, "ShopgunClipin")
+					B(Setting.ShellClipinSpeed)
+				end
+			end
+			if v6 then v6:Play(nil, nil, Setting.ReloadAnimationSpeed) end
+			GunSound:FireServer(v, "ReloadSound")
+			B(Setting.ReloadTime)
+			if Setting.LimitedClipEnabled then v17 = v17 - 1 end
+			v16 = Setting.AmmoPerClip
+			ChangeAmmoAndClip:FireServer(v16, v17)
+			v14 = false
+		end
+		
+		local function g()
+			v13 = true
+			local v15_local = false
+			if not v11 or (not v12 or (not v13 or (v14 or not (v16 > 0 and Humanoid.Health > 0)))) then return end
+			v12 = false
+			if Setting.ChargedShotEnabled then
+				if v9:FindFirstChild("ChargeSound") then GunSound:FireServer(v, "ChargeSound") end
+				B(Setting.ChargingTime)
+				v15_local = true
+			end
+			if Setting.MinigunEnabled then
+				if v9:FindFirstChild("WindUp") then GunSound:FireServer(v, "WindUp") end
+				B(Setting.DelayBeforeFiring)
+			end
+			repeat
+				if not v11 or (v14 or not (v13 or v15_local)) or not (v16 > 0 and Humanoid.Health > 0) then break end
+				v15_local = false
+				for i = 1, Setting.BurstFireEnabled and Setting.BulletPerBurst or 1 do
+					spawn(a)
+					for j = 1, Setting.ShotgunEnabled and Setting.BulletPerShot or 1 do
+						d(v9)
+					end
+					v16 = v16 - 1
+					ChangeAmmoAndClip:FireServer(v16, v17)
+					if Setting.BurstFireEnabled then B(Setting.BurstRate) end
+					if v16 <= 0 then break end
+				end
+				if Setting.DualEnabled then
+					v9 = v9 == Handle and v10 or Handle
+				end
+				B(Setting.FireRate)
+			until not Setting.Auto
+			if v9:FindFirstChild("FireSound") and v9.FireSound.Playing and v9.FireSound.Looped then
+				v9.FireSound:Stop()
+			end
+			if Setting.MinigunEnabled then
+				if v9:FindFirstChild("WindDown") then GunSound:FireServer(v, "WindDown") end
+				B(Setting.DelayAfterFiring)
+			end
+			v12 = true
+			if v16 <= 0 then k() end
+		end
+		
+		local function f()
+			v13 = false
+		end
+		
+		v2.Button1Down:connect(function()
+			if lp.PlayerScripts:FindFirstChild("IsMobile") and lp.PlayerScripts.IsMobile.Value ~= false then return end
+			g()
+		end)
+		v2.Button1Up:connect(function()
+			if lp.PlayerScripts:FindFirstChild("IsMobile") and lp.PlayerScripts.IsMobile.Value ~= false then return end
+			f()
+		end)
+		
+		local function mobileShoot(p1, p2, p3)
+			if p2 == Enum.UserInputState.Begin then g() return end
+			if p2 ~= Enum.UserInputState.End then return end
+			f()
+		end
+		
+		local function mobileReload(p1, p2, p3)
+			if p2 ~= Enum.UserInputState.Begin then return end
+			k()
+		end
+		
+		ChangeAmmoAndClip.OnClientEvent:connect(function(p1, p2)
+			v16 = p1
+			v17 = p2
+		end)
+		
+		v.Equipped:connect(function(p1)
+			task.spawn(function()
+				repeat task.wait()
+					if weaponnow.Name == "Cleansed Rifle" then
+						if game.Players.LocalPlayer.Character.Humanoid and (game.Players.LocalPlayer.Character.Humanoid:IsA("Humanoid") and (game.Players.LocalPlayer.Character.Humanoid.Health > 0 and game.Players.LocalPlayer.Character.Torso)) then 
+							spawn(function()
+								InflictTarget:FireServer(game.Players.LocalPlayer.Character.Torso.Name, game.Players.LocalPlayer.Character.Humanoid, game.Players.LocalPlayer.Character.Torso, weaponnow, lookVector) 
+								t[Zombie] = true
+								task.wait(0.3)
+							end)
+						end
+					end
+				until weaponnow.Parent ~= game.Players.LocalPlayer.Character
+			end)
+			v11 = true
+			ContextActionService:BindAction("Shoot", mobileShoot, true, Enum.KeyCode.ButtonL1, Enum.KeyCode.ButtonR1)
+			ContextActionService:SetImage("Shoot", "rbxassetid://3319681178")
+			ContextActionService:SetPosition("Shoot", UDim2.new(1, -130, 0, 20))
+			ContextActionService:BindAction("Reload", mobileReload, true, Enum.KeyCode.ButtonL2, Enum.KeyCode.ButtonR2)
+			ContextActionService:SetImage("Reload", "rbxassetid://6433106861")
+			ContextActionService:SetPosition("Reload", UDim2.new(1, -110, 0, -35))
+			if Setting.MouseIconID then p1.Icon = "rbxassetid://" .. Setting.MouseIconID end
+			if v4 then v4:Play(nil, nil, Setting.IdleAnimationSpeed) end
+			
+			p1.KeyDown:connect(function(key)
+				if string.lower(key) == "r" then k() return end
+				if string.lower(key) ~= "e" then return end
+				if not v14 and (v15 == false and Setting.SniperEnabled) then
+					workspace.CurrentCamera.FieldOfView = Setting.FieldOfView
+					lp.CameraMode = Enum.CameraMode.LockFirstPerson
+					if script:FindFirstChild("Mouse Sensitivity") then script["Mouse Sensitivity"].Disabled = false end
+					v15 = true
+					v2.Icon = "http://www.roblox.com/asset?id=187746799"
+					return
+				end
+				workspace.CurrentCamera.FieldOfView = 70
+				lp.CameraMode = Enum.CameraMode.Classic
+				if script:FindFirstChild("Mouse Sensitivity") then script["Mouse Sensitivity"].Disabled = true end
+				v15 = false
+				if Setting.MouseIconID then v2.Icon = "rbxassetid://" .. Setting.MouseIconID end
+			end)
+			
+			if not Setting.DualEnabled or workspace.FilteringEnabled then return end
+			v10.CanCollide = false
+			local leftArm = v.Parent:FindFirstChild("Left Arm")
+			local rightArm = v.Parent:FindFirstChild("Right Arm")
+			if not rightArm then return end
+			local RightGrip = rightArm:FindFirstChild("RightGrip")
+			if not RightGrip then return end
+			v8 = RightGrip:Clone()
+			v8.Name = "LeftGrip"
+			v8.Part0 = leftArm
+			v8.Part1 = v10
+			v8.Parent = leftArm
+		end)
+		
+		v.Unequipped:connect(function()
+			v11 = false
+			ContextActionService:UnbindAction("Shoot")
+			ContextActionService:UnbindAction("Reload")
+			if v4 then v4:Stop() end
+			if v15 then
+				workspace.CurrentCamera.FieldOfView = 70
+				lp.CameraMode = Enum.CameraMode.Classic
+				if script:FindFirstChild("Mouse Sensitivity") then script["Mouse Sensitivity"].Disabled = true end
+				v15 = false
+				if Setting.MouseIconID then v2.Icon = "rbxassetid://" .. Setting.MouseIconID end
+			end
+			if not Setting.DualEnabled or workspace.FilteringEnabled then return end
+			v10.CanCollide = true
+			if v8 then v8:Destroy() end
+		end)
+		
+		Humanoid.Died:connect(function()
+			v11 = false
+			if v4 then v4:Stop() end
+			if v15 then
+				workspace.CurrentCamera.FieldOfView = 70
+				lp.CameraMode = Enum.CameraMode.Classic
+				if script:FindFirstChild("Mouse Sensitivity") then script["Mouse Sensitivity"].Disabled = true end
+				v15 = false
+				if Setting.MouseIconID then v2.Icon = "rbxassetid://" .. Setting.MouseIconID end
+			end
+			if not Setting.DualEnabled or workspace.FilteringEnabled then return end
+			v10.CanCollide = true
+			if v8 then v8:Destroy() end
+		end)
+	end)
+end
+
+while task.wait(1) do
+	for i, v in pairs(lp.Backpack:GetChildren()) do
+		processGun(v)
+	end
+end

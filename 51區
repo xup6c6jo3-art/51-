@@ -1,22 +1,24 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (完整擴充版)
+-- Roblox 物件沿座標路徑自動排列腳本 (最終完整版)
 -- =========================================================
 
 -- 1. 設定要排列的所有物件清單（依序排列）
 local itemsToArrange = {
-	-- 原有的物件
+	-- 原始物件
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
 	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
 	game.Workspace:FindFirstChild("Exit"),
 	
-	-- 剛剛新加入的監聽/區域物件
+	-- 其它區域物件
 	game.Workspace:FindFirstChild("CorruptedZone") and game.Workspace["CorruptedZone"]:FindFirstChild("RGB - 9999 Cell"),
 	game.Workspace:FindFirstChild("DeadGround") and game.Workspace["DeadGround"]:FindFirstChild("LXD - 9999 Cell"),
 	game.Workspace:FindFirstChild("Castle") and game.Workspace["Castle"]:FindFirstChild("Scarecrow"),
 	game.Workspace:FindFirstChild("CyberLand") and game.Workspace["CyberLand"]:FindFirstChild("GetMechGun"),
-	game.Workspace:FindFirstChild("ESCAPE FROM THIS HELL"),
+	
+	-- 位於 MazeWorld 資料夾底下的 ESCAPE FROM THIS HELL
+	game.Workspace:FindFirstChild("MazeWorld") and game.Workspace["MazeWorld"]:FindFirstChild("ESCAPE FROM THIS HELL"),
 }
 
 -- 過濾掉找不到的物件（避免報錯）

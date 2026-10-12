@@ -1,33 +1,42 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (最終完整版)
+-- Roblox 物件沿座標路徑自動排列腳本 (防漏抓除錯版)
 -- =========================================================
 
--- 1. 設定要排列的所有物件清單（依序排列）
-local itemsToArrange = {
-	-- 原始物件
-	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
-	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
-	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
-	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
-	game.Workspace:FindFirstChild("Exit"),
-	
-	-- 其它區域物件
-	game.Workspace:FindFirstChild("CorruptedZone") and game.Workspace["CorruptedZone"]:FindFirstChild("RGB - 9999 Cell"),
-	game.Workspace:FindFirstChild("DeadGround") and game.Workspace["DeadGround"]:FindFirstChild("LXD - 9999 Cell"),
-	game.Workspace:FindFirstChild("Castle") and game.Workspace["Castle"]:FindFirstChild("Scarecrow"),
-	game.Workspace:FindFirstChild("CyberLand") and game.Workspace["CyberLand"]:FindFirstChild("GetMechGun"),
-	
-	-- 位於 MazeWorld 資料夾底下的 ESCAPE FROM THIS HELL
-	game.Workspace:FindFirstChild("MazeWorld") and game.Workspace["MazeWorld"]:FindFirstChild("ESCAPE FROM THIS HELL"),
-}
-
--- 過濾掉找不到的物件（避免報錯）
-local validItems = {}
-for _, item in ipairs(itemsToArrange) do
-	if item then 
-		table.insert(validItems, item) 
+-- 1. 條列式精準尋找每一個物件（找不到會明確在 Output 印出提示）
+local function findMyItem(pathDescription, finderFunc)
+	local success, result = pcall(finderFunc)
+	if success and result then
+		print("成功找到物件: " .. pathDescription)
+		return result
+	else
+		warn("⚠️ 找不到物件: " .. pathDescription)
+		return nil
 	end
 end
+
+local validItems = {}
+
+-- 收集所有物件
+table.insert(validItems, findMyItem("GetHEXGun", function() return game.Workspace["Floor 2"].GetHEXGun end))
+table.insert(validItems, findMyItem("GetRedMissile", function() return game.Workspace["Floor 2"].GetRedMissile end))
+table.insert(validItems, findMyItem("GetIceCrossbow", function() return game.Workspace.IceZone.GetIceCrossbow end))
+table.insert(validItems, findMissing or function() return game.Workspace.LavaZone.Escape end()) -- 修正 Escape 尋找
+table.insert(validItems, findMyItem("Exit", function() return game.Workspace.Exit end))
+table.insert(validItems, findMyItem("RGB - 9999 Cell", function() return game.Workspace.CorruptedZone["RGB - 9999 Cell"] end))
+table.insert(validItems, findMyItem("LXD - 9999 Cell", function() return game.Workspace.DeadGround["LXD - 9999 Cell"] end))
+table.insert(validItems, findMyItem("Scarecrow", function() return game.Workspace.Castle.Scarecrow end))
+table.insert(validItems, findMyItem("GetMechGun", function() return game.Workspace.CyberLand.GetMechGun end))
+table.insert(validItems, findMyItem("ESCAPE FROM THIS HELL", function() return game.Workspace.MazeWorld["ESCAPE FROM THIS HELL"] end))
+
+-- 過濾掉 nil
+local itemsToArrange = {}
+for _, item in ipairs(validItems) do
+	if item then
+		table.insert(itemsToArrange, item)
+	end
+end
+
+print("總共成功載入並準備排列的物件數量: " .. #itemsToArrange)
 
 -- 2. 設定目標高度 Y = 1148
 local TARGET_Y = 1148.00
@@ -37,11 +46,10 @@ local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
 local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
 local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
-local BLOCK_SIZE = 5 -- 每個方塊大小
+local BLOCK_SIZE = 5
 
--- 通用定位函式（支援 Model 與單獨的 BasePart）
+-- 通用定位函式
 local function placeItem(item, targetPos)
-	-- 關閉所有碰撞，防止物理引擎自動把物件頂高
 	for _, part in ipairs(item:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.CanCollide = false
@@ -53,7 +61,6 @@ local function placeItem(item, targetPos)
 		item.Anchored = true
 	end
 	
-	-- 根據類型進行精準定位
 	if item:IsA("Model") then
 		local mainPart = item:FindFirstChild("Head") or item.PrimaryPart or item:FindFirstChildOfClass("BasePart")
 		if mainPart then
@@ -69,8 +76,6 @@ end
 
 -- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始進行全部物件的自動排列...")
-	
 	local line1Vector = Point2 - Point1
 	local line1Length = line1Vector.Magnitude
 	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
@@ -80,30 +85,30 @@ local function arrangeItems()
 	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
 	
 	local currentItemIndex = 1
-	local totalItems = #validItems
+	local totalItems = #itemsToArrange
 	
-	-- 排列第一條線 (Point1 -> Point2)
+	-- 排列第一條線
 	for i = 0, countLine1 do
 		if currentItemIndex > totalItems then break end
 		local alpha = (i * BLOCK_SIZE) / line1Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point1:Lerp(Point2, alpha)
-		local item = validItems[currentItemIndex]
+		local item = itemsToArrange[currentItemIndex]
 		
 		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	-- 排列第二條線 (Point3 -> Point4)
+	-- 排列第二條線
 	for i = 0, countLine2 do
 		if currentItemIndex > totalItems then break end
 		local alpha = (i * BLOCK_SIZE) / line2Length
 		if alpha > 1 then break end
 		
 		local spawnPos = Point3:Lerp(Point4, alpha)
-		local item = validItems[currentItemIndex]
+		local item = itemsToArrange[currentItemIndex]
 		
 		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
@@ -113,5 +118,4 @@ local function arrangeItems()
 	print("全部物件排列完成！")
 end
 
--- 執行排列
 arrangeItems()

@@ -1,20 +1,30 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (修正 Workspace 直接子物件)
+-- Roblox 物件沿座標路徑自動排列腳本 (完整擴充版)
 -- =========================================================
 
--- 1. 設定要排列的模型/物件清單
+-- 1. 設定要排列的所有物件清單（依序排列）
 local itemsToArrange = {
+	-- 原有的物件
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetHEXGun"),
 	game.Workspace:FindFirstChild("Floor 2") and game.Workspace["Floor 2"]:FindFirstChild("GetRedMissile"),
 	game.Workspace:FindFirstChild("IceZone") and game.Workspace["IceZone"]:FindFirstChild("GetIceCrossbow"),
 	game.Workspace:FindFirstChild("LavaZone") and game.Workspace["LavaZone"]:FindFirstChild("Escape"),
-	game.Workspace:FindFirstChild("Exit"), -- 直接抓 Workspace 底下的 Exit
+	game.Workspace:FindFirstChild("Exit"),
+	
+	-- 剛剛新加入的監聽/區域物件
+	game.Workspace:FindFirstChild("CorruptedZone") and game.Workspace["CorruptedZone"]:FindFirstChild("RGB - 9999 Cell"),
+	game.Workspace:FindFirstChild("DeadGround") and game.Workspace["DeadGround"]:FindFirstChild("LXD - 9999 Cell"),
+	game.Workspace:FindFirstChild("Castle") and game.Workspace["Castle"]:FindFirstChild("Scarecrow"),
+	game.Workspace:FindFirstChild("CyberLand") and game.Workspace["CyberLand"]:FindFirstChild("GetMechGun"),
+	game.Workspace:FindFirstChild("ESCAPE FROM THIS HELL"),
 }
 
--- 過濾掉找不到的物件
+-- 過濾掉找不到的物件（避免報錯）
 local validItems = {}
 for _, item in ipairs(itemsToArrange) do
-	if item then table.insert(validItems, item) end
+	if item then 
+		table.insert(validItems, item) 
+	end
 end
 
 -- 2. 設定目標高度 Y = 1148
@@ -25,11 +35,11 @@ local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
 local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
 local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
 
-local BLOCK_SIZE = 5
+local BLOCK_SIZE = 5 -- 每個方塊大小
 
--- 通用定位函式（同時支援 Model 與單獨的 BasePart）
+-- 通用定位函式（支援 Model 與單獨的 BasePart）
 local function placeItem(item, targetPos)
-	-- 關閉所有碰撞，防物理自動升降
+	-- 關閉所有碰撞，防止物理引擎自動把物件頂高
 	for _, part in ipairs(item:GetDescendants()) do
 		if part:IsA("BasePart") then
 			part.CanCollide = false
@@ -41,7 +51,7 @@ local function placeItem(item, targetPos)
 		item.Anchored = true
 	end
 	
-	-- 判斷是 Model 還是單一 Part
+	-- 根據類型進行精準定位
 	if item:IsA("Model") then
 		local mainPart = item:FindFirstChild("Head") or item.PrimaryPart or item:FindFirstChildOfClass("BasePart")
 		if mainPart then
@@ -57,7 +67,7 @@ end
 
 -- 3. 自動排列邏輯
 local function arrangeItems()
-	print("開始進行物件自動排列...")
+	print("開始進行全部物件的自動排列...")
 	
 	local line1Vector = Point2 - Point1
 	local line1Length = line1Vector.Magnitude
@@ -70,7 +80,7 @@ local function arrangeItems()
 	local currentItemIndex = 1
 	local totalItems = #validItems
 	
-	-- 排列第一條線
+	-- 排列第一條線 (Point1 -> Point2)
 	for i = 0, countLine1 do
 		if currentItemIndex > totalItems then break end
 		local alpha = (i * BLOCK_SIZE) / line1Length
@@ -84,7 +94,7 @@ local function arrangeItems()
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	-- 排列第二條線
+	-- 排列第二條線 (Point3 -> Point4)
 	for i = 0, countLine2 do
 		if currentItemIndex > totalItems then break end
 		local alpha = (i * BLOCK_SIZE) / line2Length
@@ -98,7 +108,8 @@ local function arrangeItems()
 		currentItemIndex = currentItemIndex + 1
 	end
 	
-	print("全部排列完成！")
+	print("全部物件排列完成！")
 end
 
+-- 執行排列
 arrangeItems()

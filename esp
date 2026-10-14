@@ -1,0 +1,160 @@
+-- 確保遊戲已載入
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- 設定要排除的 Workspace 頂層資料夾名稱
+local excludedFolders = {
+    ["Camera"] = true,
+    ["Terrain"] = true,
+    ["Bulls"] = true,
+    ["CraftingRoom"] = true,
+    ["Defense"] = true,
+    ["Floor 1"] = true,
+    ["Floor 2"] = true,
+    ["Ground"] = true,
+    ["IceZone"] = true,
+    ["Incinerator"] = true,
+    ["LavaZone"] = true,
+    ["MIS"] = true,
+    ["MazeWorld"] = true,
+    ["Mineshaft"] = true,
+    ["Misc"] = true,
+    ["Ores"] = true,
+    ["SecurityCameras"] = true,
+    ["Sewer"] = true,
+    ["SoundFile"] = true,
+    ["StarterTips"] = true,
+    ["VFXs"] = true,
+    ["OpenDoors"] = true,
+    ["RandomEvent"] = true,
+}
+
+-- 儲存所有建立的 ESP 物件：{ [Instance] = { Box = Drawing, Text = Drawing } }
+local activeDrawings = {}
+
+-- 建立 ESP 的函數
+local function createESP(target)
+    if activeDrawings[target] then return end
+
+    -- 建立方框 (Box)
+    local box = Drawing.new("Square")
+    box.Visible = false
+    box.ZIndex = 2
+    box.Thickness = 1.5
+    box.Color = Color3.fromRGB(0, 255, 128) -- 預設顏色：亮綠色
+    box.Filled = false
+
+    -- 建立文字標籤 (Text)
+    local text = Drawing.new("Text")
+    text.Visible = false
+    text.ZIndex = 3
+    text.Size = 14
+    text.Color = Color3.fromRGB(255, 255, 255)
+    text.Center = true
+    text.Outline = true
+
+    activeDrawings[target] = { Box = box, Text = text }
+end
+
+-- 移除 ESP 的函數
+local function removeESP(target)
+    if activeDrawings[target] then
+        if activeDrawings[target].Box then activeDrawings[target].Box:Remove() end
+        if activeDrawings[target].Text then activeDrawings[target].Text:Remove() end
+        activeDrawings[target] = nil
+    end
+end
+
+-- 檢查該物件是否應該被排除（即是否在第一張圖的資料夾內）
+local function shouldExclude(target)
+    local current = target
+    while current and current ~= Workspace do
+        if excludedFolders[current.Name] then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
+-- 取得物件的中心點位置
+local function getModelCFrame(target)
+    if target:IsA("Model") then
+        return target:GetPivot()
+    elseif target:IsA("BasePart") then
+        return target.CFrame
+    end
+    return nil
+end
+
+-- 初始化掃描 Workspace 下所有符合條件的物件
+local function scanWorkspace()
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if not excludedFolders[child.Name] then
+            -- 如果它本身就是目標或是容器內的模型/零件
+            if child:IsA("Model") or child:IsA("BasePart") then
+                createESP(child)
+            end
+        end
+    end
+end
+
+scanWorkspace()
+
+-- 監聽 Workspace 新增或刪除的物件
+Workspace.ChildAdded:Connect(function(child)
+    if not excludedFolders[child.Name] and (child:IsA("Model") or child:IsA("BasePart")) then
+        createESP(child)
+    end
+end)
+
+Workspace.ChildRemoved:Connect(function(child)
+    removeESP(child)
+end)
+
+-- 每幀更新繪製
+RunService.RenderStepped:Connect(function()
+    for target, drawings in pairs(activeDrawings) do
+        if not target or not target.Parent or shouldExclude(target) then
+            removeESP(target)
+        else
+            local cf = getModelCFrame(target)
+            if cf then
+                local pos, onScreen = Camera:WorldToViewportPoint(cf.Position)
+                if onScreen then
+                    -- 計算簡單的距離
+                    local dist = (Camera.CFrame.Position - cf.Position).Magnitude
+                    
+                    -- 設定方框大小 (可依需求調整比例)
+                    local size = Vector2.new(2500 / dist, 3500 / dist)
+                    size = Vector2.new(math.clamp(size.X, 15, 300), math.clamp(size.Y, 20, 400))
+
+                    -- 更新 Box 位置與大小
+                    drawings.Box.Size = size
+                    drawings.Box.Position = Vector2.new(pos.X - size.X / 2, pos.Y - size.Y / 2)
+                    drawings.Box.Visible = true
+
+                    -- 更新文字標籤 (顯示名稱與距離)
+                    drawings.Text.Text = string.Format("%s [%d m]", target.Name, math.floor(dist))
+                    drawings.Text.Position = Vector2.new(pos.X, (pos.Y - size.Y / 2) - 18)
+                    drawings.Text.Visible = true
+                else
+                    drawings.Box.Visible = false
+                    drawings.Text.Visible = false
+                end
+            else
+                drawings.Box.Visible = false
+                drawings.Text.Visible = false
+            end
+        end
+    end
+end)
+
+print("ESP 腳本已成功啟動！已自動排除指定資料夾。")

@@ -1,41 +1,40 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (修正拼寫錯誤版)
+-- Roblox 物件沿座標路徑自動排列腳print本 (超安全防呆版)
 -- =========================================================
-
-local function findMyItem(pathDescription, finderFunc)
-	local success, result = pcall(finderFunc)
-	if success and result then
-		print("成功找到物件: " .. pathDescription)
-		return result
-	else
-		warn("⚠️ 找不到物件: " .. pathDescription)
-		return nil
-	end
-end
 
 local validItems = {}
 
--- 收集所有物件（已修正 Escape 的拼寫）
-table.insert(validItems, findMyItem("GetHEXGun", function() return game.Workspace["Floor 2"].GetHEXGun end))
-table.insert(validItems, findMyItem("GetRedMissile", function() return game.Workspace["Floor 2"].GetRedMissile end))
-table.insert(validItems, findMyItem("GetIceCrossbow", function() return game.Workspace.IceZone.GetIceCrossbow end))
-table.insert(validItems, findMyItem("Escape", function() return game.Workspace.LavaZone.Escape end))
-table.insert(validItems, findMyItem("Exit", function() return game.Workspace.Exit end))
-table.insert(validItems, findMyItem("RGB - 9999 Cell", function() return game.Workspace.CorruptedZone["RGB - 9999 Cell"] end))
-table.insert(validItems, findMyItem("LXD - 9999 Cell", function() return game.Workspace.DeadGround["LXD - 9999 Cell"] end))
-table.insert(validItems, findMyItem("Scarecrow", function() return game.Workspace.Castle.Scarecrow end))
-table.insert(validItems, findMyItem("GetMechGun", function() return game.Workspace.CyberLand.GetMechGun end))
-table.insert(validItems, findMyItem("ESCAPE FROM THIS HELL", function() return game.Workspace.MazeWorld["ESCAPE FROM THIS HELL"] end))
-
--- 過濾掉 nil
-local itemsToArrange = {}
-for _, item in ipairs(validItems) do
+local function addValid(name, item)
 	if item then
-		table.insert(itemsToArrange, item)
+		print("成功找到物件: " .. name)
+		table.insert(validItems, item)
+	else
+		warn("⚠️ 找不到物件: " .. name)
 	end
 end
 
-print("總共成功載入並準備排列的物件數量: " .. #itemsToArrange)
+-- 逐層安全尋找所有物件
+local floor2 = game.Workspace:FindFirstChild("Floor 2")
+local iceZone = game.Workspace:FindFirstChild("IceZone")
+local lavaZone = game.Workspace:FindFirstChild("LavaZone")
+local corruptedZone = game.Workspace:FindFirstChild("CorruptedZone")
+local deadGround = game.Workspace:FindFirstChild("DeadGround")
+local castle = game.Workspace:FindFirstChild("Castle")
+local cyberLand = game.Workspace:FindFirstChild("CyberLand")
+local mazeWorld = game.Workspace:FindFirstChild("MazeWorld")
+
+addValid("GetHEXGun", floor2 and floor2:FindFirstChild("GetHEXGun"))
+addValid("GetRedMissile", floor2 and floor2:FindFirstChild("GetRedMissile"))
+addValid("GetIceCrossbow", iceZone and iceZone:FindFirstChild("GetIceCrossbow"))
+addValid("Escape", lavaZone and lavaZone:FindFirstChild("Escape"))
+addValid("Exit", game.Workspace:FindFirstChild("Exit"))
+addValid("RGB - 9999 Cell", corruptedZone and corruptedZone:FindFirstChild("RGB - 9999 Cell"))
+addValid("LXD - 9999 Cell", deadGround and deadGround:FindFirstChild("LXD - 9999 Cell"))
+addValid("Scarecrow", castle and castle:FindFirstChild("Scarecrow"))
+addValid("GetMechGun", cyberLand and cyberLand:FindFirstChild("GetMechGun"))
+addValid("ESCAPE FROM THIS HELL", mazeWorld and mazeWorld:FindFirstChild("ESCAPE FROM THIS HELL"))
+
+print("總共成功載入並準備排列的物件數量: " .. #validItems)
 
 -- 2. 設定目標高度 Y = 1148
 local TARGET_Y = 1148.00
@@ -84,7 +83,7 @@ local function arrangeItems()
 	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
 	
 	local currentItemIndex = 1
-	local totalItems = #itemsToArrange
+	local totalItems = #validItems
 	
 	-- 排列第一條線
 	for i = 0, countLine1 do
@@ -93,7 +92,7 @@ local function arrangeItems()
 		if alpha > 1 then break end
 		
 		local spawnPos = Point1:Lerp(Point2, alpha)
-		local item = itemsToArrange[currentItemIndex]
+		local item = validItems[currentItemIndex]
 		
 		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))
@@ -107,7 +106,7 @@ local function arrangeItems()
 		if alpha > 1 then break end
 		
 		local spawnPos = Point3:Lerp(Point4, alpha)
-		local item = itemsToArrange[currentItemIndex]
+		local item = validItems[currentItemIndex]
 		
 		placeItem(item, spawnPos)
 		print(string.format("已放置 [%s] 到 (%.2f, %.2f, %.2f)", item.Name, spawnPos.X, spawnPos.Y, spawnPos.Z))

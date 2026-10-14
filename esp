@@ -1,160 +1,152 @@
--- 確保遊戲已載入
-if not game:IsLoaded() then
-    game.Loaded:Wait()
-end
-
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
-local Camera = Workspace.CurrentCamera
+local UserInputService = game:GetService("UserInputService")
+local CollectionService = game:GetService("CollectionService")
+
 local LocalPlayer = Players.LocalPlayer
 
--- 設定要排除的 Workspace 頂層資料夾名稱
-local excludedFolders = {
-    ["Camera"] = true,
-    ["Terrain"] = true,
-    ["Bulls"] = true,
-    ["CraftingRoom"] = true,
-    ["Defense"] = true,
-    ["Floor 1"] = true,
-    ["Floor 2"] = true,
-    ["Ground"] = true,
-    ["IceZone"] = true,
-    ["Incinerator"] = true,
-    ["LavaZone"] = true,
-    ["MIS"] = true,
-    ["MazeWorld"] = true,
-    ["Mineshaft"] = true,
-    ["Misc"] = true,
-    ["Ores"] = true,
-    ["SecurityCameras"] = true,
-    ["Sewer"] = true,
-    ["SoundFile"] = true,
-    ["StarterTips"] = true,
-    ["VFXs"] = true,
-    ["OpenDoors"] = true,
-    ["RandomEvent"] = true,
+--// 設定
+local CONFIG = {
+	Enabled = true,
+	ToggleKey = Enum.KeyCode.K,   -- 開關按鍵
+	ShowPlayers = true,
+	ShowMonsters = true,
+	MaxDistance = 500,            -- 超過此距離不顯示
+	PlayerColor = Color3.fromRGB(0, 170, 255),
+	MonsterColor = Color3.fromRGB(255, 60, 60),
+	MonsterTag = "Monster",       -- 有此 Tag 的 Model 一律視為怪物
 }
 
--- 儲存所有建立的 ESP 物件：{ [Instance] = { Box = Drawing, Text = Drawing } }
-local activeDrawings = {}
+local gui = Instance.new("ScreenGui")
+gui.Name = "ESP"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- 建立 ESP 的函數
-local function createESP(target)
-    if activeDrawings[target] then return end
+local tracked = {} -- [model] = {highlight, billboard, label, humanoid, kind}
 
-    -- 建立方框 (Box)
-    local box = Drawing.new("Square")
-    box.Visible = false
-    box.ZIndex = 2
-    box.Thickness = 1.5
-    box.Color = Color3.fromRGB(0, 255, 128) -- 預設顏色：亮綠色
-    box.Filled = false
-
-    -- 建立文字標籤 (Text)
-    local text = Drawing.new("Text")
-    text.Visible = false
-    text.ZIndex = 3
-    text.Size = 14
-    text.Color = Color3.fromRGB(255, 255, 255)
-    text.Center = true
-    text.Outline = true
-
-    activeDrawings[target] = { Box = box, Text = text }
+local function getRoot(model)
+	return model:FindFirstChild("HumanoidRootPart")
+		or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart")
 end
 
--- 移除 ESP 的函數
-local function removeESP(target)
-    if activeDrawings[target] then
-        if activeDrawings[target].Box then activeDrawings[target].Box:Remove() end
-        if activeDrawings[target].Text then activeDrawings[target].Text:Remove() end
-        activeDrawings[target] = nil
-    end
+local function removeTarget(model)
+	local data = tracked[model]
+	if not data then return end
+	data.highlight:Destroy()
+	data.billboard:Destroy()
+	tracked[model] = nil
 end
 
--- 檢查該物件是否應該被排除（即是否在第一張圖的資料夾內）
-local function shouldExclude(target)
-    local current = target
-    while current and current ~= Workspace do
-        if excludedFolders[current.Name] then
-            return true
-        end
-        current = current.Parent
-    end
-    return false
+local function addTarget(model, kind)
+	if tracked[model] or model == LocalPlayer.Character then return end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = getRoot(model)
+	if not humanoid or not root then return end
+
+	local color = kind == "Player" and CONFIG.PlayerColor or CONFIG.MonsterColor
+
+	local highlight = Instance.new("Highlight")
+	highlight.Adornee = model
+	highlight.FillColor = color
+	highlight.OutlineColor = color
+	highlight.FillTransparency = 0.6
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Parent = gui
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Adornee = root
+	billboard.Size = UDim2.fromOffset(200, 50)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = gui
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 0.3
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Parent = billboard
+
+	tracked[model] = {
+		highlight = highlight,
+		billboard = billboard,
+		label = label,
+		humanoid = humanoid,
+		kind = kind,
+	}
+
+	model.AncestryChanged:Connect(function()
+		if not model:IsDescendantOf(workspace) then
+			removeTarget(model)
+		end
+	end)
 end
 
--- 取得物件的中心點位置
-local function getModelCFrame(target)
-    if target:IsA("Model") then
-        return target:GetPivot()
-    elseif target:IsA("BasePart") then
-        return target.CFrame
-    end
-    return nil
+local function classify(model)
+	if CollectionService:HasTag(model, CONFIG.MonsterTag) then
+		return "Monster"
+	end
+	if Players:GetPlayerFromCharacter(model) then
+		return "Player"
+	end
+	return "Monster" -- 其他有 Humanoid 的非玩家模型 = 怪物/NPC
 end
 
--- 初始化掃描 Workspace 下所有符合條件的物件
-local function scanWorkspace()
-    for _, child in ipairs(Workspace:GetChildren()) do
-        if not excludedFolders[child.Name] then
-            -- 如果它本身就是目標或是容器內的模型/零件
-            if child:IsA("Model") or child:IsA("BasePart") then
-                createESP(child)
-            end
-        end
-    end
+local function tryAdd(inst)
+	if inst:IsA("Humanoid") and inst.Parent and inst.Parent:IsA("Model") then
+		local model = inst.Parent
+		addTarget(model, classify(model))
+	end
 end
 
-scanWorkspace()
+-- 初始掃描 + 監聽新生成的目標
+for _, d in ipairs(workspace:GetDescendants()) do
+	tryAdd(d)
+end
+workspace.DescendantAdded:Connect(tryAdd)
 
--- 監聽 Workspace 新增或刪除的物件
-Workspace.ChildAdded:Connect(function(child)
-    if not excludedFolders[child.Name] and (child:IsA("Model") or child:IsA("BasePart")) then
-        createESP(child)
-    end
-end)
-
-Workspace.ChildRemoved:Connect(function(child)
-    removeESP(child)
-end)
-
--- 每幀更新繪製
+-- 每幀更新
 RunService.RenderStepped:Connect(function()
-    for target, drawings in pairs(activeDrawings) do
-        if not target or not target.Parent or shouldExclude(target) then
-            removeESP(target)
-        else
-            local cf = getModelCFrame(target)
-            if cf then
-                local pos, onScreen = Camera:WorldToViewportPoint(cf.Position)
-                if onScreen then
-                    -- 計算簡單的距離
-                    local dist = (Camera.CFrame.Position - cf.Position).Magnitude
-                    
-                    -- 設定方框大小 (可依需求調整比例)
-                    local size = Vector2.new(2500 / dist, 3500 / dist)
-                    size = Vector2.new(math.clamp(size.X, 15, 300), math.clamp(size.Y, 20, 400))
+	local char = LocalPlayer.Character
+	local myRoot = char and char:FindFirstChild("HumanoidRootPart")
 
-                    -- 更新 Box 位置與大小
-                    drawings.Box.Size = size
-                    drawings.Box.Position = Vector2.new(pos.X - size.X / 2, pos.Y - size.Y / 2)
-                    drawings.Box.Visible = true
+	for model, data in pairs(tracked) do
+		local root = getRoot(model)
+		local hum = data.humanoid
 
-                    -- 更新文字標籤 (顯示名稱與距離)
-                    drawings.Text.Text = string.Format("%s [%d m]", target.Name, math.floor(dist))
-                    drawings.Text.Position = Vector2.new(pos.X, (pos.Y - size.Y / 2) - 18)
-                    drawings.Text.Visible = true
-                else
-                    drawings.Box.Visible = false
-                    drawings.Text.Visible = false
-                end
-            else
-                drawings.Box.Visible = false
-                drawings.Text.Visible = false
-            end
-        end
-    end
+		if not root or hum.Health <= 0 then
+			removeTarget(model)
+		else
+			local allowed = CONFIG.Enabled
+				and ((data.kind == "Player" and CONFIG.ShowPlayers)
+				or (data.kind == "Monster" and CONFIG.ShowMonsters))
+
+			local dist = myRoot and (root.Position - myRoot.Position).Magnitude or 0
+			local visible = allowed and dist <= CONFIG.MaxDistance
+
+			data.highlight.Enabled = visible
+			data.billboard.Enabled = visible
+
+			if visible then
+				data.label.Text = string.format(
+					"%s\nHP %d/%d  [%d studs]",
+					model.Name,
+					math.floor(hum.Health),
+					math.floor(hum.MaxHealth),
+					math.floor(dist)
+				)
+			end
+		end
+	end
 end)
 
-print("ESP 腳本已成功啟動！已自動排除指定資料夾。")
+-- 按鍵開關
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == CONFIG.ToggleKey then
+		CONFIG.Enabled = not CONFIG.Enabled
+	end
+end)

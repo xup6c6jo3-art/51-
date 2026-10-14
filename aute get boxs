@@ -1,0 +1,273 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local TargetParent = LocalPlayer:WaitForChild("PlayerGui")
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Area51TP_GUI_V2"
+ScreenGui.Parent = TargetParent
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
+MainFrame.Size = UDim2.new(0, 260, 0, 420)
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+-- 標題欄
+local Title = Instance.new("TextLabel")
+Title.Parent = MainFrame
+Title.Size = UDim2.new(1, 0, 0, 36)
+Title.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+Title.BorderSizePixel = 0
+Title.Text = "Supply 偵測與傳送選單"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 16
+Title.Font = Enum.Font.SourceSansBold
+
+-- 滾動清單
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Parent = MainFrame
+Scroll.Position = UDim2.new(0, 5, 0, 40)
+Scroll.Size = UDim2.new(1, -10, 1, -45)
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Scroll.ScrollBarThickness = 6
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = Scroll
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 4)
+
+-- 狀態變數 (SupplyBall 持續傳送狀態)
+local ballLoopEnabled = false
+local ballLoopConnection = nil
+
+-- 建立分類標題標籤
+local function createHeader(text)
+    local header = Instance.new("TextLabel")
+    header.Parent = Scroll
+    header.Size = UDim2.new(1, -8, 0, 26)
+    header.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    header.BorderSizePixel = 0
+    header.Text = "  " .. text
+    header.TextColor3 = Color3.fromRGB(255, 215, 0)
+    header.TextSize = 14
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Font = Enum.Font.SourceSansBold
+    return header
+end
+
+-- 建立一般按鈕 (用於箱子)
+local function createBtn(text, enabled, callback)
+    local btn = Instance.new("TextButton")
+    btn.Parent = Scroll
+    btn.Size = UDim2.new(1, -8, 0, 30)
+    btn.BackgroundColor3 = enabled and Color3.fromRGB(50, 50, 55) or Color3.fromRGB(30, 30, 32)
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = enabled and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(100, 100, 100)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.SourceSans
+    btn.Active = enabled
+    btn.AutoButtonColor = enabled
+    
+    if enabled and callback then
+        btn.MouseButton1Click:Connect(function()
+            callback()
+        end)
+    end
+    return btn
+end
+
+-- 取得物件座標
+local function getObjectPosition(obj)
+    if obj:IsA("Model") then
+        if obj.PrimaryPart then return obj.PrimaryPart.Position end
+        local part = obj:FindFirstChildWhichIsA("BasePart")
+        if part then return part.Position end
+    elseif obj:IsA("BasePart") then
+        return obj.Position
+    end
+    return nil
+end
+
+-- 取得物件對應的 Part (供持續傳送對齊用)
+local function getObjectPart(obj)
+    if not obj then return nil end
+    if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
+    if obj:IsA("BasePart") then return obj end
+    return obj:FindFirstChildWhichIsA("BasePart")
+end
+
+-- 設定角色穿牆 (Noclip)
+local function setNoclip(enabled)
+    local char = LocalPlayer.Character
+    if char then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = not enabled
+            end
+        end
+    end
+end
+
+-- 重新整理整個介面與偵測邏輯
+local function refreshUI()
+    -- 清除舊的 UI 項目
+    for _, child in ipairs(Scroll:GetChildren()) do
+        if child:IsA("GuiObject") and child ~= UIListLayout then
+            child:Destroy()
+        end
+    end
+
+    -- ==================== 1. SupplyCrate (箱子區塊) ====================
+    createHeader("補給箱 (SupplyCrate)")
+    local validCrates = {}
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == "SupplyCrate" then
+            local pos = getObjectPosition(obj)
+            if pos and pos.Y <= 5000 then -- 5000 以上忽略
+                table.insert(validCrates, {object = obj, position = pos})
+            end
+        end
+    end
+
+    if #validCrates > 0 then
+        for i, data in ipairs(validCrates) do
+            local btnText = string.format("傳送到箱子 #%d (Y: %.1f)", i, data.position.Y)
+            createBtn(btnText, true, function()
+                local character = LocalPlayer.Character
+                if character and character:FindFirstChild("HumanoidRootPart") then
+                    character.HumanoidRootPart.CFrame = CFrame.new(data.position + Vector3.new(0, 3, 0))
+                end
+            end)
+        end
+    else
+        createBtn("目前無可用補給箱 (已停用)", false, nil)
+    end
+
+    -- ==================== 2. SupplyBall (球區塊) ====================
+    createHeader("補給球 (SupplyBall)")
+    local validBalls = {}
+    
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj.Name == "SupplyBall" then
+            local pos = getObjectPosition(obj)
+            if pos and pos.Y <= 5000 then -- 5000 以上忽略
+                table.insert(validBalls, {object = obj, position = pos})
+            end
+        end
+    end
+
+    local hasBall = #validBalls > 0
+
+    -- 如果球消失了但持續傳送還開著，自動關閉
+    if not hasBall and ballLoopEnabled then
+        ballLoopEnabled = false
+        if ballLoopConnection then
+            ballLoopConnection:Disconnect()
+            ballLoopConnection = nil
+        end
+        setNoclip(false)
+    end
+
+    -- 建立 SupplyBall 的持續傳送按鈕
+    local ballBtn = Instance.new("TextButton")
+    ballBtn.Parent = Scroll
+    ballBtn.Size = UDim2.new(1, -8, 0, 30)
+    
+    if hasBall then
+        ballBtn.BackgroundColor3 = ballLoopEnabled and Color3.fromRGB(180, 50, 50) or Color3.fromRGB(50, 50, 55)
+        ballBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+        ballBtn.Text = ballLoopEnabled and "持續傳送補給球: 開" or "持續傳送補給球: 關"
+        ballBtn.Active = true
+        ballBtn.AutoButtonColor = true
+        
+        ballBtn.MouseButton1Click:Connect(function()
+            ballLoopEnabled = not ballLoopEnabled
+            refreshUI() -- 點擊後重新整理切換按鈕顏色與文字
+            
+            if ballLoopEnabled then
+                if ballLoopConnection then ballLoopConnection:Disconnect() end
+                
+                -- 使用 Stepped 階段鎖定，持續傳送到球下方 -5 位置
+                ballLoopConnection = RunService.Stepped:Connect(function()
+                    -- 即時尋找有效的 SupplyBall
+                    local targetObj = nil
+                    for _, obj in ipairs(workspace:GetChildren()) do
+                        if obj.Name == "SupplyBall" then
+                            local p = getObjectPosition(obj)
+                            if p and p.Y <= 5000 then
+                                targetObj = obj
+                                break
+                            end
+                        end
+                    end
+                    
+                    if targetObj and LocalPlayer.Character then
+                        local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        local targetPart = getObjectPart(targetObj)
+                        
+                        if myHrp and targetPart then
+                            setNoclip(true) -- 開啟穿牆
+                            
+                            -- 重置物理速度，解決抖動
+                            myHrp.Velocity = Vector3.new(0, 0, 0)
+                            myHrp.RotVelocity = Vector3.new(0, 0, 0)
+                            
+                            -- 持續傳送到下方 -5
+                            myHrp.CFrame = targetPart.CFrame * CFrame.new(0, -5, 0)
+                        end
+                    else
+                        -- 球消失時自動中斷
+                        ballLoopEnabled = false
+                        if ballLoopConnection then
+                            ballLoopConnection:Disconnect()
+                            ballLoopConnection = nil
+                        end
+                        setNoclip(false)
+                        refreshUI()
+                    end
+                end)
+            else
+                if ballLoopConnection then
+                    ballLoopConnection:Disconnect()
+                    ballLoopConnection = nil
+                end
+                setNoclip(false) -- 關閉時恢復碰撞
+            end
+        end)
+    else
+        -- 沒有球時變暗並停用
+        ballBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 32)
+        ballBtn.TextColor3 = Color3.fromRGB(100, 100, 100)
+        ballBtn.Text = "目前無可用補給球 (已停用)"
+        ballBtn.Active = false
+        ballBtn.AutoButtonColor = false
+    end
+end
+
+-- 初始化執行
+refreshUI()
+
+-- 即時監聽 workspace 內物件生成與移除 (支援 SupplyCrate 與 SupplyBall)
+workspace.ChildAdded:Connect(function(child)
+    if child.Name == "SupplyCrate" or child.Name == "SupplyBall" then
+        task.wait(0.3)
+        refreshUI()
+    end
+end)
+
+workspace.ChildRemoved:Connect(function(child)
+    if child.Name == "SupplyCrate" or child.Name == "SupplyBall" then
+        refreshUI()
+    end
+end)

@@ -4,13 +4,13 @@ local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
--- 1. 怪物配置清單 (已擴充 Mech O' Lantern 與 Scarecrow)
+-- 1. 怪物配置清單 (指定專屬 Parent 資料夾可大幅提升效能)
 local MONSTERS = {
 	{ name = "Reaper", label = "Reaper" },
 	{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
 	{ name = "Zombie Brute", label = "Zombie Brute" },
-	{ name = "Mech O' Lantern", label = "Mech O' Lantern" },
-	{ name = "Scarecrow", label = "Scarecrow" }
+	{ name = "Mech O' Lantern", label = "Mech O' Lantern", folder = "CyberLand" },
+	{ name = "Scarecrow", label = "Scarecrow", folder = "Castle" }
 }
 
 -- 2. 掛載 UI 的安全 Parent
@@ -90,14 +90,21 @@ UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 ---------------------------------------------------------
--- 4. 輔助函數：搜尋怪物、Part 與 Noclip 穿牆控制
+-- 4. 輔助函數：高效搜尋怪物、Part 與 Noclip 穿牆控制
 ---------------------------------------------------------
 
--- 支援搜尋根目錄與子資料夾 (如 CyberLand / Castle)
-local function findMonster(monsterName)
-	local monster = Workspace:FindFirstChild(monsterName, true)
-	if monster then return monster end
-	return nil
+-- 輕量化搜尋，絕不使用耗能的全域遞迴 (Recursive)
+local function findMonster(config)
+	if config.folder then
+		local folderObj = Workspace:FindFirstChild(config.folder)
+		if folderObj then
+			local target = folderObj:FindFirstChild(config.name)
+			if target then return target end
+		end
+	end
+	
+	-- 備用：直接在 Workspace 第一層尋找
+	return Workspace:FindFirstChild(config.name)
 end
 
 local function getMonsterPart(monster)
@@ -199,7 +206,7 @@ end
 -- 實時血量更新
 RunService.RenderStepped:Connect(function()
 	for _, config in ipairs(MONSTERS) do
-		local monster = findMonster(config.name)
+		local monster = findMonster(config)
 		if monster then
 			local bb = monster:FindFirstChild("MonsterESP_Billboard")
 			if bb and bb:FindFirstChild("HPLabel") then
@@ -334,7 +341,7 @@ for _, config in ipairs(MONSTERS) do
 
 	-- ESP 點擊
 	EspBtn.MouseButton1Click:Connect(function()
-		local monster = findMonster(config.name)
+		local monster = findMonster(config)
 		if monster then
 			espEnabled = not espEnabled
 			EspBtn.Text = espEnabled and "ESP: 開" or "ESP"
@@ -345,7 +352,7 @@ for _, config in ipairs(MONSTERS) do
 
 	-- 單次傳送點擊
 	TpBtn.MouseButton1Click:Connect(function()
-		local monster = findMonster(config.name)
+		local monster = findMonster(config)
 		if monster and LocalPlayer.Character then
 			local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 			local targetPart = getMonsterPart(monster)
@@ -357,7 +364,7 @@ for _, config in ipairs(MONSTERS) do
 		end
 	end)
 
-	-- 持續傳送點擊 (流暢傳送 + Noclip 穿牆)
+	-- 持續傳送點擊
 	LoopTpBtn.MouseButton1Click:Connect(function()
 		loopEnabled = not loopEnabled
 		
@@ -369,17 +376,15 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name]:Disconnect()
 			end
 			
-			-- 使用 Stepped 階段鎖定，完全消除物理反彈產生的抖動
 			loopConnections[config.name] = RunService.Stepped:Connect(function()
-				local monster = findMonster(config.name)
+				local monster = findMonster(config)
 				if monster and LocalPlayer.Character then
 					local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 					local targetPart = getMonsterPart(monster)
 					
 					if myHrp and targetPart then
-						setNoclip(true) -- 開啟穿牆
+						setNoclip(true)
 						
-						-- 重置角色物理速度，解決速度積累造成的震動
 						myHrp.Velocity = Vector3.new(0, 0, 0)
 						myHrp.RotVelocity = Vector3.new(0, 0, 0)
 						
@@ -397,7 +402,7 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name] = nil
 			end
 			
-			setNoclip(false) -- 關閉持續傳送時，自動關閉穿牆恢復正常碰撞
+			setNoclip(false)
 		end
 	end)
 
@@ -417,17 +422,17 @@ for _, config in ipairs(MONSTERS) do
 				loopConnections[config.name]:Disconnect()
 				loopConnections[config.name] = nil
 			end
-			setNoclip(false) -- 怪物消失或停用時確保關閉穿牆
+			setNoclip(false)
 		end
 	}
 end
 
--- 6. 監聽狀態更新（存在亮起，不存在變灰）
+-- 6. 監聽狀態更新
 local function updateUIStates()
 	for _, config in ipairs(MONSTERS) do
 		local data = UI_Rows[config.name]
 		if data then
-			local monster = findMonster(config.name)
+			local monster = findMonster(config)
 			local isAlive = (monster ~= nil)
 
 			if isAlive then
@@ -454,7 +459,7 @@ local function updateUIStates()
 					applyESP(monster, true)
 				end
 			else
-				data.StopLoop() -- 怪物不在時自動停止跟隨與穿牆
+				data.StopLoop()
 				
 				data.Row.BackgroundTransparency = 0.5
 				data.NameLabel.TextColor3 = Color3.fromRGB(120, 120, 120)
@@ -481,13 +486,8 @@ local function updateUIStates()
 	end
 end
 
--- 初始化與監聽 Workspace 全域變化
+-- 初始化與監聽（第一層與指定資料夾新增/刪除時才觸發，節省效能）
 updateUIStates()
 
-Workspace.DescendantAdded:Connect(function(descendant)
-	updateUIStates()
-end)
-
-Workspace.DescendantRemoving:Connect(function(descendant)
-	updateUIStates()
-end)
+Workspace.ChildAdded:Connect(updateUIStates)
+Workspace.ChildRemoved:Connect(updateUIStates)

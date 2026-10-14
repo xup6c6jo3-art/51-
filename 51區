@@ -1,5 +1,5 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (完全修正版)
+-- Roblox 物件沿座標路徑自動排列腳本 (修正拼寫錯誤版)
 -- =========================================================
 
 local function findMyItem(pathDescription, finderFunc)
@@ -15,7 +15,7 @@ end
 
 local validItems = {}
 
--- 收集所有物件（已修正 Escape 的尋找邏輯）
+-- 收集所有物件（已修正 Escape 的拼寫）
 table.insert(validItems, findMyItem("GetHEXGun", function() return game.Workspace["Floor 2"].GetHEXGun end))
 table.insert(validItems, findMyItem("GetRedMissile", function() return game.Workspace["Floor 2"].GetRedMissile end))
 table.insert(validItems, findMyItem("GetIceCrossbow", function() return game.Workspace.IceZone.GetIceCrossbow end))

@@ -1,5 +1,5 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳print本 (超安全防呆版)
+-- Roblox 物件沿座標路徑自動排列腳本 (已移除 ESCAPE FROM THIS HELL)
 -- =========================================================
 
 local validItems = {}
@@ -13,7 +13,7 @@ local function addValid(name, item)
 	end
 end
 
--- 逐層安全尋找所有物件
+-- 逐層安全尋找所有物件（已移除 MazeWorld）
 local floor2 = game.Workspace:FindFirstChild("Floor 2")
 local iceZone = game.Workspace:FindFirstChild("IceZone")
 local lavaZone = game.Workspace:FindFirstChild("LavaZone")
@@ -21,7 +21,6 @@ local corruptedZone = game.Workspace:FindFirstChild("CorruptedZone")
 local deadGround = game.Workspace:FindFirstChild("DeadGround")
 local castle = game.Workspace:FindFirstChild("Castle")
 local cyberLand = game.Workspace:FindFirstChild("CyberLand")
-local mazeWorld = game.Workspace:FindFirstChild("MazeWorld")
 
 addValid("GetHEXGun", floor2 and floor2:FindFirstChild("GetHEXGun"))
 addValid("GetRedMissile", floor2 and floor2:FindFirstChild("GetRedMissile"))
@@ -32,7 +31,6 @@ addValid("RGB - 9999 Cell", corruptedZone and corruptedZone:FindFirstChild("RGB 
 addValid("LXD - 9999 Cell", deadGround and deadGround:FindFirstChild("LXD - 9999 Cell"))
 addValid("Scarecrow", castle and castle:FindFirstChild("Scarecrow"))
 addValid("GetMechGun", cyberLand and cyberLand:FindFirstChild("GetMechGun"))
-addValid("ESCAPE FROM THIS HELL", mazeWorld and mazeWorld:FindFirstChild("ESCAPE FROM THIS HELL"))
 
 print("總共成功載入並準備排列的物件數量: " .. #validItems)
 

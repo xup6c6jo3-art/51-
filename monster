@@ -4,11 +4,13 @@ local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
--- 1. 怪物配置清單
+-- 1. 怪物配置清單 (已擴充 Mech O' Lantern 與 Scarecrow)
 local MONSTERS = {
 	{ name = "Reaper", label = "Reaper" },
 	{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
-	{ name = "Zombie Brute", label = "Zombie Brute" }
+	{ name = "Zombie Brute", label = "Zombie Brute" },
+	{ name = "Mech O' Lantern", label = "Mech O' Lantern" },
+	{ name = "Scarecrow", label = "Scarecrow" }
 }
 
 -- 2. 掛載 UI 的安全 Parent
@@ -91,14 +93,10 @@ end)
 -- 4. 輔助函數：搜尋怪物、Part 與 Noclip 穿牆控制
 ---------------------------------------------------------
 
+-- 支援搜尋根目錄與子資料夾 (如 CyberLand / Castle)
 local function findMonster(monsterName)
-	local monster = Workspace:FindFirstChild(monsterName)
+	local monster = Workspace:FindFirstChild(monsterName, true)
 	if monster then return monster end
-	for _, child in ipairs(Workspace:GetChildren()) do
-		if child.Name == monsterName then
-			return child
-		end
-	end
 	return nil
 end
 
@@ -483,13 +481,13 @@ local function updateUIStates()
 	end
 end
 
--- 初始化與監聽 Workspace
+-- 初始化與監聽 Workspace 全域變化
 updateUIStates()
 
-Workspace.ChildAdded:Connect(function(child)
+Workspace.DescendantAdded:Connect(function(descendant)
 	updateUIStates()
 end)
 
-Workspace.ChildRemoved:Connect(function(child)
+Workspace.DescendantRemoving:Connect(function(descendant)
 	updateUIStates()
 end)

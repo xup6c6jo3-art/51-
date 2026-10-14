@@ -1,8 +1,7 @@
 -- =========================================================
--- Roblox 物件沿座標路徑自動排列腳本 (防漏抓除錯版)
+-- Roblox 物件沿座標路徑自動排列腳本 (完全修正版)
 -- =========================================================
 
--- 1. 條列式精準尋找每一個物件（找不到會明確在 Output 印出提示）
 local function findMyItem(pathDescription, finderFunc)
 	local success, result = pcall(finderFunc)
 	if success and result then
@@ -16,11 +15,11 @@ end
 
 local validItems = {}
 
--- 收集所有物件
+-- 收集所有物件（已修正 Escape 的尋找邏輯）
 table.insert(validItems, findMyItem("GetHEXGun", function() return game.Workspace["Floor 2"].GetHEXGun end))
 table.insert(validItems, findMyItem("GetRedMissile", function() return game.Workspace["Floor 2"].GetRedMissile end))
 table.insert(validItems, findMyItem("GetIceCrossbow", function() return game.Workspace.IceZone.GetIceCrossbow end))
-table.insert(validItems, findMissing or function() return game.Workspace.LavaZone.Escape end()) -- 修正 Escape 尋找
+table.insert(validItems, findMyItem("Escape", function() return game.Workspace.LavaZone.Escape end))
 table.insert(validItems, findMyItem("Exit", function() return game.Workspace.Exit end))
 table.insert(validItems, findMyItem("RGB - 9999 Cell", function() return game.Workspace.CorruptedZone["RGB - 9999 Cell"] end))
 table.insert(validItems, findMyItem("LXD - 9999 Cell", function() return game.Workspace.DeadGround["LXD - 9999 Cell"] end))

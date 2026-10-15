@@ -1,0 +1,692 @@
+--[[
+	怪物監聽與流暢傳送面板 V3 (優化版)
+	- 事件驅動的怪物快取 (不再每幀 FindFirstChild)
+	- 單一 Stepped 迴圈處理跟隨 + 穿牆，且同時只跟隨一隻
+	- 穿牆會記錄/還原原始 CanCollide
+	- ESP 血量改用 HealthChanged，狀態在怪物重生後自動恢復
+	- 重複執行會自動清理舊版本
+]]
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+---------------------------------------------------------
+-- 設定
+---------------------------------------------------------
+local CONFIG = {
+	Monsters = {
+		{ name = "Reaper", label = "Reaper" },
+		{ name = "Jack O' Lantern", label = "Jack O' Lantern" },
+		{ name = "Zombie Brute", label = "Zombie Brute" },
+	},
+	DefaultOffset = 8,                      -- 預設高度 (負數 = 怪物下方)
+	OffsetLimit = 200,                      -- 高度輸入上下限
+	ToggleKey = Enum.KeyCode.RightShift,    -- 顯示/隱藏面板
+	GuiName = "Area51TP_GUI_V3",
+}
+
+local COLORS = {
+	Background = Color3.fromRGB(28, 28, 30),
+	Row = Color3.fromRGB(38, 38, 42),
+	Stroke = Color3.fromRGB(50, 50, 55),
+	Text = Color3.fromRGB(255, 255, 255),
+	Dim = Color3.fromRGB(120, 120, 120),
+	Button = Color3.fromRGB(70, 70, 75),
+	EspOff = Color3.fromRGB(50, 50, 55),
+	Disabled = Color3.fromRGB(50, 50, 55),
+	Blue = Color3.fromRGB(0, 122, 255),
+	Green = Color3.fromRGB(40, 160, 80),
+	Red = Color3.fromRGB(180, 50, 50),
+	Input = Color3.fromRGB(25, 25, 28),
+}
+
+---------------------------------------------------------
+-- 清理舊版本 (重複執行時避免連線殘留)
+---------------------------------------------------------
+local env = (getgenv and getgenv()) or _G
+if env.Area51TP_Cleanup then
+	pcall(env.Area51TP_Cleanup)
+	env.Area51TP_Cleanup = nil
+end
+
+local function getGuiParent()
+	if gethui then
+		local ok, ui = pcall(gethui)
+		if ok and ui then return ui end
+	end
+	if syn and syn.protect_gui then
+		return CoreGui
+	end
+	return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local GuiParent = getGuiParent()
+for _, name in ipairs({ "Area51TP_GUI_V2", CONFIG.GuiName }) do
+	local old = GuiParent:FindFirstChild(name)
+	if old then old:Destroy() end
+end
+
+---------------------------------------------------------
+-- 連線管理
+---------------------------------------------------------
+local connections = {}
+
+local function track(conn)
+	table.insert(connections, conn)
+	return conn
+end
+
+local function disconnectAll(list)
+	for i = #list, 1, -1 do
+		list[i]:Disconnect()
+		list[i] = nil
+	end
+end
+
+---------------------------------------------------------
+-- 狀態
+---------------------------------------------------------
+local states = {}     -- [怪物名稱] = state
+local stateList = {}  -- 依設定順序
+
+for i, cfg in ipairs(CONFIG.Monsters) do
+	local state = {
+		name = cfg.name,
+		label = cfg.label,
+		offset = CONFIG.DefaultOffset,
+		espOn = false,
+		monster = nil,
+		part = nil,
+		-- ESP 相關
+		highlight = nil,
+		billboard = nil,
+		hpLabel = nil,
+		humanoid = nil,
+		espConn = nil,
+		-- UI 元件
+		ui = nil,
+	}
+	states[cfg.name] = state
+	stateList[i] = state
+end
+
+local followState = nil  -- 目前正在持續傳送的怪物 state
+local followConn = nil
+local refreshUI          -- 前向宣告
+
+---------------------------------------------------------
+-- 角色快取與穿牆
+---------------------------------------------------------
+local character, rootPart
+local charParts = {}       -- [BasePart] = true
+local originalCollide = {} -- [BasePart] = 原始 CanCollide
+local charConns = {}
+
+local function bindCharacter(newChar)
+	disconnectAll(charConns)
+	table.clear(charParts)
+	table.clear(originalCollide)
+
+	character = newChar
+	rootPart = nil
+	if not newChar then return end
+
+	rootPart = newChar:FindFirstChild("HumanoidRootPart")
+	if not rootPart then
+		task.spawn(function()
+			local hrp = newChar:WaitForChild("HumanoidRootPart", 10)
+			if character == newChar then rootPart = hrp end
+		end)
+	end
+
+	for _, d in ipairs(newChar:GetDescendants()) do
+		if d:IsA("BasePart") then charParts[d] = true end
+	end
+	table.insert(charConns, newChar.DescendantAdded:Connect(function(d)
+		if d:IsA("BasePart") then charParts[d] = true end
+	end))
+	table.insert(charConns, newChar.DescendantRemoving:Connect(function(d)
+		charParts[d] = nil
+		originalCollide[d] = nil
+	end))
+end
+
+local function applyNoclip()
+	for part in pairs(charParts) do
+		if originalCollide[part] == nil then
+			originalCollide[part] = part.CanCollide
+		end
+		part.CanCollide = false
+	end
+end
+
+local function restoreCollision()
+	for part, original in pairs(originalCollide) do
+		if part.Parent then
+			part.CanCollide = original
+		end
+	end
+	table.clear(originalCollide)
+end
+
+track(LocalPlayer.CharacterAdded:Connect(bindCharacter))
+bindCharacter(LocalPlayer.Character)
+
+---------------------------------------------------------
+-- 怪物 Part 查找 (有快取)
+---------------------------------------------------------
+local function resolvePart(monster)
+	if monster:IsA("Model") and monster.PrimaryPart then
+		return monster.PrimaryPart
+	end
+
+	local hrp = monster:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then return hrp end
+
+	local fallback
+	for _, child in ipairs(monster:GetChildren()) do
+		if child:IsA("BasePart") then
+			if child.Name:find("Torso") or child.Name:find("Body") then
+				return child
+			end
+			fallback = fallback or child
+		end
+	end
+	return fallback
+end
+
+local function getPart(state)
+	local monster = state.monster
+	if not monster then return nil end
+
+	local part = state.part
+	if part and part:IsDescendantOf(monster) then
+		return part
+	end
+
+	part = resolvePart(monster)
+	state.part = part
+	return part
+end
+
+---------------------------------------------------------
+-- ESP (血量由 HealthChanged 驅動)
+---------------------------------------------------------
+local function removeESP(state)
+	if state.espConn then
+		state.espConn:Disconnect()
+		state.espConn = nil
+	end
+	if state.highlight then
+		state.highlight:Destroy()
+		state.highlight = nil
+	end
+	if state.billboard then
+		state.billboard:Destroy()
+		state.billboard = nil
+	end
+	state.hpLabel = nil
+	state.humanoid = nil
+end
+
+local function updateHP(state)
+	local label, hum = state.hpLabel, state.humanoid
+	if not (label and hum) then return end
+
+	local maxHp = math.max(1, math.floor(hum.MaxHealth))
+	local hp = math.clamp(math.floor(hum.Health), 0, maxHp)
+	label.Text = string.format("HP: %d / %d", hp, maxHp)
+	label.TextColor3 = Color3.fromHSV(hp / maxHp * 0.3, 1, 1)
+end
+
+local function applyESP(state)
+	removeESP(state)
+
+	local monster = state.monster
+	if not monster then return end
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "MonsterESP_Highlight"
+	highlight.FillColor = Color3.fromRGB(255, 50, 50)
+	highlight.FillTransparency = 0.5
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+	highlight.OutlineTransparency = 0
+	highlight.Parent = monster
+	state.highlight = highlight
+
+	local part = getPart(state)
+	if not part then return end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "MonsterESP_Billboard"
+	bb.Adornee = part
+	bb.Size = UDim2.new(0, 150, 0, 45)
+	bb.StudsOffset = Vector3.new(0, 4, 0)
+	bb.AlwaysOnTop = true
+
+	local nameText = Instance.new("TextLabel")
+	nameText.Name = "NameLabel"
+	nameText.Size = UDim2.new(1, 0, 0, 20)
+	nameText.BackgroundTransparency = 1
+	nameText.Text = monster.Name
+	nameText.TextColor3 = COLORS.Text
+	nameText.TextStrokeTransparency = 0
+	nameText.Font = Enum.Font.SourceSansBold
+	nameText.TextSize = 14
+	nameText.Parent = bb
+
+	local hpText = Instance.new("TextLabel")
+	hpText.Name = "HPLabel"
+	hpText.Position = UDim2.new(0, 0, 0, 20)
+	hpText.Size = UDim2.new(1, 0, 0, 20)
+	hpText.BackgroundTransparency = 1
+	hpText.TextColor3 = Color3.fromRGB(50, 255, 100)
+	hpText.TextStrokeTransparency = 0
+	hpText.Font = Enum.Font.SourceSans
+	hpText.TextSize = 13
+	hpText.Parent = bb
+
+	bb.Parent = monster
+	state.billboard = bb
+	state.hpLabel = hpText
+
+	local humanoid = monster:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		state.humanoid = humanoid
+		updateHP(state)
+		state.espConn = humanoid.HealthChanged:Connect(function()
+			updateHP(state)
+		end)
+	else
+		hpText.Text = "HP: 在場"
+	end
+end
+
+---------------------------------------------------------
+-- 傳送邏輯
+---------------------------------------------------------
+-- 只取怪物位置，保留自己的朝向，避免跟著怪物旋轉而歪斜
+local function computeCFrame(root, part, offset)
+	local pos = part.Position + Vector3.new(0, offset, 0)
+	return CFrame.new(pos) * (root.CFrame - root.Position)
+end
+
+local function teleportOnce(state)
+	local part = getPart(state)
+	if part and rootPart and rootPart.Parent then
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.CFrame = computeCFrame(rootPart, part, state.offset)
+	end
+end
+
+local function stopFollow()
+	if followConn then
+		followConn:Disconnect()
+		followConn = nil
+	end
+	local prev = followState
+	followState = nil
+	restoreCollision()
+	if prev then refreshUI(prev) end
+end
+
+local function startFollow(state)
+	if followState == state then return end
+
+	local prev = followState
+	followState = state
+	if prev then refreshUI(prev) end
+	refreshUI(state)
+
+	if followConn then return end -- 迴圈已在跑，只是切換目標
+
+	-- Stepped：在物理模擬前鎖定位置，避免物理反彈抖動
+	followConn = RunService.Stepped:Connect(function()
+		local s = followState
+		if not (s and s.monster and rootPart and rootPart.Parent) then return end
+
+		local part = getPart(s)
+		if not part then return end
+
+		applyNoclip()
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.AssemblyAngularVelocity = Vector3.zero
+		rootPart.CFrame = computeCFrame(rootPart, part, s.offset)
+	end)
+end
+
+---------------------------------------------------------
+-- UI 建立
+---------------------------------------------------------
+local function round(parent, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = parent
+	return c
+end
+
+local function stroke(parent, color, thickness)
+	local s = Instance.new("UIStroke")
+	s.Color = color
+	s.Thickness = thickness
+	s.Parent = parent
+	return s
+end
+
+local function makeButton(parent, name, text, x, width, color, bold)
+	local b = Instance.new("TextButton")
+	b.Name = name
+	b.Position = UDim2.new(0, x, 0, 38)
+	b.Size = UDim2.new(0, width, 0, 35)
+	b.BackgroundColor3 = color
+	b.Text = text
+	b.TextColor3 = COLORS.Text
+	b.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
+	b.TextSize = 13
+	b.Parent = parent
+	round(b, 6)
+	return b
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = CONFIG.GuiName
+ScreenGui.ResetOnSpawn = false
+if syn and syn.protect_gui then pcall(syn.protect_gui, ScreenGui) end
+ScreenGui.Parent = GuiParent
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.BackgroundColor3 = COLORS.Background
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.2, 0, 0.15, 0)
+MainFrame.Size = UDim2.new(0, 460, 0, 380)
+MainFrame.Parent = ScreenGui
+round(MainFrame, 10)
+stroke(MainFrame, COLORS.Stroke, 1.5)
+
+-- 標題列 (拖曳區)
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 40)
+TitleBar.BackgroundTransparency = 1
+TitleBar.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -50, 1, 0)
+TitleLabel.Position = UDim2.new(0, 12, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "怪物監聽與流暢傳送面板  [" .. CONFIG.ToggleKey.Name .. " 顯示/隱藏]"
+TitleLabel.TextColor3 = COLORS.Text
+TitleLabel.TextSize = 15
+TitleLabel.Font = Enum.Font.SourceSansBold
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "Close"
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -36, 0, 6)
+CloseBtn.BackgroundColor3 = COLORS.Red
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = COLORS.Text
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextSize = 14
+CloseBtn.Parent = TitleBar
+round(CloseBtn, 6)
+
+local Line = Instance.new("Frame")
+Line.Size = UDim2.new(1, -20, 0, 1)
+Line.Position = UDim2.new(0, 10, 0, 40)
+Line.BackgroundColor3 = COLORS.Stroke
+Line.BorderSizePixel = 0
+Line.Parent = MainFrame
+
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Name = "MonsterList"
+ScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+ScrollFrame.Size = UDim2.new(1, -20, 1, -60)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 4
+ScrollFrame.CanvasSize = UDim2.new()
+ScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ScrollFrame.Parent = MainFrame
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Padding = UDim.new(0, 10)
+ListLayout.Parent = ScrollFrame
+
+-- 拖曳 (支援滑鼠與觸控)
+do
+	local dragging, dragStart, startPos
+	track(TitleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = MainFrame.Position
+			local c
+			c = input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+					c:Disconnect()
+				end
+			end)
+		end
+	end))
+	track(UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			MainFrame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end))
+end
+
+-- 顯示/隱藏熱鍵
+track(UserInputService.InputBegan:Connect(function(input, processed)
+	if not processed and input.KeyCode == CONFIG.ToggleKey then
+		MainFrame.Visible = not MainFrame.Visible
+	end
+end))
+
+---------------------------------------------------------
+-- UI 狀態刷新
+---------------------------------------------------------
+local function setEnabled(btn, enabled, color)
+	btn.Active = enabled
+	btn.AutoButtonColor = enabled
+	btn.BackgroundColor3 = enabled and color or COLORS.Disabled
+	btn.TextTransparency = enabled and 0 or 0.5
+end
+
+refreshUI = function(state)
+	local ui = state.ui
+	if not ui or not ui.Row.Parent then return end
+
+	local alive = state.monster ~= nil
+	local following = (followState == state)
+
+	ui.Row.BackgroundTransparency = alive and 0 or 0.5
+	ui.NameLabel.TextColor3 = alive and COLORS.Text or COLORS.Dim
+	ui.Status.Text = alive and "● 在場" or "○ 不在場"
+	ui.Status.TextColor3 = alive and Color3.fromRGB(60, 200, 100) or COLORS.Dim
+
+	-- ESP 永遠可切換，怪物出現時會自動套用
+	ui.EspBtn.Text = state.espOn and "ESP: 開" or "ESP"
+	ui.EspBtn.BackgroundColor3 = state.espOn and COLORS.Green or COLORS.EspOff
+
+	setEnabled(ui.TpBtn, alive, COLORS.Blue)
+	setEnabled(ui.LoopBtn, alive, following and COLORS.Red or COLORS.Button)
+	ui.LoopBtn.Text = following and "持續傳送: 開" or "持續傳送: 關"
+
+	ui.DistanceBox.TextTransparency = alive and 0 or 0.5
+end
+
+---------------------------------------------------------
+-- 建立每隻怪物的 Row
+---------------------------------------------------------
+for index, state in ipairs(stateList) do
+	local Row = Instance.new("Frame")
+	Row.Name = state.name .. "_Row"
+	Row.LayoutOrder = index
+	Row.Size = UDim2.new(1, 0, 0, 85)
+	Row.BackgroundColor3 = COLORS.Row
+	Row.BorderSizePixel = 0
+	Row.Parent = ScrollFrame
+	round(Row, 8)
+
+	local NameLabel = Instance.new("TextLabel")
+	NameLabel.Name = "MonsterName"
+	NameLabel.Position = UDim2.new(0, 10, 0, 8)
+	NameLabel.Size = UDim2.new(0, 170, 0, 22)
+	NameLabel.BackgroundTransparency = 1
+	NameLabel.Text = state.label
+	NameLabel.TextColor3 = COLORS.Text
+	NameLabel.Font = Enum.Font.SourceSansBold
+	NameLabel.TextSize = 15
+	NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	NameLabel.Parent = Row
+
+	local Status = Instance.new("TextLabel")
+	Status.Name = "Status"
+	Status.Position = UDim2.new(1, -90, 0, 8)
+	Status.Size = UDim2.new(0, 80, 0, 22)
+	Status.BackgroundTransparency = 1
+	Status.Font = Enum.Font.SourceSans
+	Status.TextSize = 13
+	Status.TextXAlignment = Enum.TextXAlignment.Right
+	Status.Parent = Row
+
+	local EspBtn = makeButton(Row, "EspButton", "ESP", 10, 75, COLORS.EspOff, false)
+	local TpBtn = makeButton(Row, "TpButton", "傳送", 95, 80, COLORS.Blue, true)
+
+	local DistanceBox = Instance.new("TextBox")
+	DistanceBox.Name = "DistanceBox"
+	DistanceBox.Position = UDim2.new(0, 185, 0, 38)
+	DistanceBox.Size = UDim2.new(0, 110, 0, 35)
+	DistanceBox.BackgroundColor3 = COLORS.Input
+	DistanceBox.Text = tostring(state.offset)
+	DistanceBox.PlaceholderText = "高度(負=下)"
+	DistanceBox.TextColor3 = COLORS.Text
+	DistanceBox.ClearTextOnFocus = false
+	DistanceBox.Font = Enum.Font.SourceSans
+	DistanceBox.TextSize = 13
+	DistanceBox.Parent = Row
+	round(DistanceBox, 6)
+	stroke(DistanceBox, Color3.fromRGB(60, 60, 65), 1)
+
+	local LoopBtn = makeButton(Row, "LoopTpButton", "持續傳送: 關", 305, 125, COLORS.Button, true)
+
+	state.ui = {
+		Row = Row,
+		NameLabel = NameLabel,
+		Status = Status,
+		EspBtn = EspBtn,
+		TpBtn = TpBtn,
+		DistanceBox = DistanceBox,
+		LoopBtn = LoopBtn,
+	}
+
+	-- 距離輸入：離開輸入框時才驗證，非法輸入還原
+	track(DistanceBox.FocusLost:Connect(function()
+		local n = tonumber(DistanceBox.Text)
+		if n then
+			state.offset = math.clamp(n, -CONFIG.OffsetLimit, CONFIG.OffsetLimit)
+		end
+		DistanceBox.Text = tostring(state.offset)
+	end))
+
+	track(EspBtn.MouseButton1Click:Connect(function()
+		state.espOn = not state.espOn
+		if state.espOn then
+			applyESP(state)
+		else
+			removeESP(state)
+		end
+		refreshUI(state)
+	end))
+
+	track(TpBtn.MouseButton1Click:Connect(function()
+		if state.monster then teleportOnce(state) end
+	end))
+
+	track(LoopBtn.MouseButton1Click:Connect(function()
+		if followState == state then
+			stopFollow()
+		elseif state.monster then
+			startFollow(state)
+		end
+	end))
+end
+
+---------------------------------------------------------
+-- 怪物監聽 (事件驅動，只處理設定清單內的名稱)
+---------------------------------------------------------
+local function onMonsterAdded(state, monster)
+	state.monster = monster
+	state.part = nil
+	refreshUI(state)
+
+	if state.espOn then
+		-- 等零件載入完再掛 ESP
+		task.spawn(function()
+			monster:WaitForChild("HumanoidRootPart", 3)
+			if state.monster == monster and state.espOn then
+				applyESP(state)
+			end
+		end)
+	end
+end
+
+local function onMonsterRemoved(state)
+	if followState == state then stopFollow() end
+	removeESP(state)
+	state.monster = nil
+	state.part = nil
+	refreshUI(state)
+end
+
+track(Workspace.ChildAdded:Connect(function(child)
+	local state = states[child.Name]
+	if state then onMonsterAdded(state, child) end
+end))
+
+track(Workspace.ChildRemoved:Connect(function(child)
+	local state = states[child.Name]
+	if state and state.monster == child then onMonsterRemoved(state) end
+end))
+
+-- 初始掃描
+for _, state in ipairs(stateList) do
+	local monster = Workspace:FindFirstChild(state.name)
+	if monster then
+		onMonsterAdded(state, monster)
+	else
+		refreshUI(state)
+	end
+end
+
+---------------------------------------------------------
+-- 關閉 / 清理
+---------------------------------------------------------
+local function destroyAll()
+	stopFollow()
+	for _, state in ipairs(stateList) do
+		removeESP(state)
+	end
+	disconnectAll(connections)
+	disconnectAll(charConns)
+	if ScreenGui then ScreenGui:Destroy() end
+end
+
+env.Area51TP_Cleanup = destroyAll
+CloseBtn.MouseButton1Click:Connect(destroyAll)

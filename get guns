@@ -1,110 +1,276 @@
 -- =========================================================
--- Roblox 固定物件初始化 + 傳送門動態監聽排列腳本
+-- 物件自動排列 UI 腳本 (LocalScript)
+-- 放置位置：StarterPlayer > StarterPlayerScripts
+-- 功能：
+--   1. 按鈕「傳送全部物件」：掃描一次，把找到的物件排到兩條線上
+--   2. 開關「持續偵測」：每 2 秒掃描一次，只處理新出現的物件
+--   3. 已經排過的物件不會重複傳送；物件消失後會釋放位置給新物件
+--   4. 找不到的資料夾直接忽略
 -- =========================================================
 
-local TARGET_Y = 1148.00
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 
-local Point1 = Vector3.new(596.51, TARGET_Y, 785.83)
-local Point2 = Vector3.new(596.69, TARGET_Y, 715.76)
-local Point3 = Vector3.new(614.35, TARGET_Y, 782.40)
-local Point4 = Vector3.new(614.96, TARGET_Y, 715.58)
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
-local BLOCK_SIZE = 5
+-- ================= 設定區 =================
+local TARGET_Y = 1148
+local BLOCK_SIZE = 5       -- 物件間隔
+local SCAN_INTERVAL = 2    -- 持續偵測間隔（秒）
+local YIELD_EVERY = 5      -- 每處理幾個物件讓出一次畫面，避免卡頓
 
--- 預先計算好所有格子的目標座標點陣列
-local targetPositions = {}
+local LINES = {
+	{ Vector3.new(596.51, TARGET_Y, 785.83), Vector3.new(596.69, TARGET_Y, 715.76) },
+	{ Vector3.new(614.35, TARGET_Y, 782.40), Vector3.new(614.96, TARGET_Y, 715.58) },
+}
 
-local function calculatePositions()
-	targetPositions = {}
-	
-	-- 計算第一條線的座標點
-	local line1Vector = Point2 - Point1
-	local line1Length = line1Vector.Magnitude
-	local countLine1 = math.floor(line1Length / BLOCK_SIZE)
-	for i = 0, countLine1 do
-		local alpha = (i * BLOCK_SIZE) / line1Length
-		if alpha > 1 then break end
-		table.insert(targetPositions, Point1:Lerp(Point2, alpha))
+-- path：Workspace 底下的資料夾路徑（空表 = 直接在 Workspace 底下）
+-- names：要抓的物件名稱（必須完全一致）
+local SOURCES = {
+	{ path = { "Floor 2" },       names = { "GetHEXGun", "GetRedMissile" } },
+	{ path = { "IceZone" },       names = { "GetIceCrossbow" } },
+	{ path = { "LavaZone" },      names = { "Escape" } },
+	{ path = {},                  names = { "Exit" } },
+	{ path = { "CorruptedZone" }, names = { "RGB - 9999 Cell" } },
+	{ path = { "DeadGround" },    names = { "LXD - 9999 Cell" } },
+	{ path = { "CyberLand" },     names = { "GetMechGun" } },
+}
+-- ==========================================
+
+-- 把 names 轉成查表用的 set，查詢比 ipairs 快
+for _, src in ipairs(SOURCES) do
+	local set = {}
+	for _, n in ipairs(src.names) do
+		set[n] = true
 	end
-	
-	-- 計算第二條線的座標點
-	local line2Vector = Point4 - Point3
-	local line2Length = line2Vector.Magnitude
-	local countLine2 = math.floor(line2Length / BLOCK_SIZE)
-	for i = 0, countLine2 do
-		local alpha = (i * BLOCK_SIZE) / line2Length
-		if alpha > 1 then break end
-		table.insert(targetPositions, Point3:Lerp(Point4, alpha))
+	src.nameSet = set
+end
+
+-- 預先計算所有排列位置
+local slots = {}
+for _, line in ipairs(LINES) do
+	local a, b = line[1], line[2]
+	local len = (b - a).Magnitude
+	local count = math.floor(len / BLOCK_SIZE)
+	for i = 0, count do
+		table.insert(slots, { pos = a:Lerp(b, (i * BLOCK_SIZE) / len), item = nil })
 	end
 end
 
-calculatePositions()
+-- 已處理過的物件（弱引用，物件被銷毀後會自動回收）
+local placed = setmetatable({}, { __mode = "k" })
+local warnedFull = false
 
--- 通用定位函式
-local function placeItem(item, targetPos)
-	for _, part in ipairs(item:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.CanCollide = false
-			part.Anchored = true
+-- 釋放已消失物件佔用的位置
+local function releaseSlots()
+	for _, slot in ipairs(slots) do
+		local item = slot.item
+		if item and not item:IsDescendantOf(workspace) then
+			slot.item = nil
 		end
 	end
+	warnedFull = false
+end
+
+local function takeFreeSlot()
+	for _, slot in ipairs(slots) do
+		if not slot.item then
+			return slot
+		end
+	end
+	return nil
+end
+
+local function placeItem(item, pos)
 	if item:IsA("BasePart") then
 		item.CanCollide = false
 		item.Anchored = true
 	end
-	
-	if item:IsA("Model") then
-		local mainPart = item:FindFirstChild("Head") or item.PrimaryPart or item:FindFirstChildOfClass("BasePart")
-		if mainPart then
-			item.PrimaryPart = mainPart
-			item:SetPrimaryPartCFrame(CFrame.new(targetPos))
-		else
-			item:PivotTo(CFrame.new(targetPos))
+	for _, d in ipairs(item:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.CanCollide = false
+			d.Anchored = true
 		end
-	elseif item:IsA("BasePart") then
-		item.CFrame = CFrame.new(targetPos)
 	end
+	item:PivotTo(CFrame.new(pos))
 end
 
--- 1. 原本就有的固定物件清單（對應格子 1 到 5）
-local permanentItems = {
-	{ name = "GetHEXGun", getter = function() local f = game.Workspace:FindFirstChild("Floor 2") return f and f:FindFirstChild("GetHEXGun") end },
-	{ name = "GetRedMissile", getter = function() local f = game.Workspace:FindFirstChild("Floor 2") return f and f:FindFirstChild("GetRedMissile") end },
-	{ name = "GetIceCrossbow", getter = function() local f = game.Workspace:FindFirstChild("IceZone") return f and f:FindFirstChild("GetIceCrossbow") end },
-	{ name = "Escape", getter = function() local f = game.Workspace:FindFirstChild("LavaZone") return f and f:FindFirstChild("Escape") end },
-	{ name = "Exit", getter = function() return game.Workspace:FindFirstChild("Exit") end },
-}
-
--- 2. 傳送門動態物件清單（指定對應的格子編號 slot，每 2 秒檢查一次）
-local portalItems = {
-	{ slot = 6, getter = function() local f = game.Workspace:FindFirstChild("CorruptedZone") return f and f:FindFirstChild("RGB - 9999 Cell") end },
-	{ slot = 7, getter = function() local f = game.Workspace:FindFirstChild("DeadGround") return f and f:FindFirstChild("LXD - 9999 Cell") end },
-	{ slot = 8, getter = function() local f = game.Workspace:FindFirstChild("Castle") return f and f:FindFirstChild("Scarecrow") end },
-	{ slot = 9, getter = function() local f = game.Workspace:FindFirstChild("CyberLand") return f and f:FindFirstChild("GetMechGun") end },
-}
-
--- 【步驟一】遊戲啟動時，先將固定物件排好一次
-print("正在擺放原本就有的固定物件...")
-for index, info in ipairs(permanentItems) do
-	local success, item = pcall(info.getter)
-	if success and item and targetPositions[index] then
-		placeItem(item, targetPositions[index])
-		print(string.format("已擺放固定物件 [%s] 到位置 %d", info.name, index))
+local function resolveContainer(path)
+	local node = workspace
+	for _, name in ipairs(path) do
+		node = node:FindFirstChild(name)
+		if not node then
+			return nil -- 資料夾不存在就忽略
+		end
 	end
+	return node
 end
 
--- 【步驟二】啟動背景守護迴圈，每 2 秒檢查一次傳送門有沒有開啓/生成
-task.spawn(function()
-	print("🌀 傳送門動態監聽守護程序已啟動（每 2 秒檢查一次）...")
-	while true do
-		for _, portal in ipairs(portalItems) do
-			local success, item = pcall(portal.getter)
-			if success and item and targetPositions[portal.slot] then
-				-- 只要傳送門生成了，就立刻把它傳送到對應的格子座標上
-				placeItem(item, targetPositions[portal.slot])
+-- UI 狀態更新（稍後賦值）
+local updateStatus = function() end
+
+local scanning = false
+local function scan()
+	if scanning then return 0 end
+	scanning = true
+
+	releaseSlots()
+	local moved = 0
+
+	for _, src in ipairs(SOURCES) do
+		local container = resolveContainer(src.path)
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if src.nameSet[child.Name] and not placed[child] then
+					local slot = takeFreeSlot()
+					if not slot then
+						if not warnedFull then
+							warnedFull = true
+							warn("排列位置已滿，部分物件未排列")
+						end
+						scanning = false
+						updateStatus()
+						return moved
+					end
+					slot.item = child
+					placed[child] = true
+					placeItem(child, slot.pos)
+					moved += 1
+					if moved % YIELD_EVERY == 0 then
+						task.wait()
+					end
+				end
 			end
 		end
-		-- 每 2 秒檢查一次
-		task.wait(2)
 	end
+
+	scanning = false
+	updateStatus()
+	return moved
+end
+
+-- ================= UI =================
+local gui = Instance.new("ScreenGui")
+gui.Name = "ArrangeItemsUI"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(220, 150)
+frame.Position = UDim2.fromOffset(20, 120)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 28)
+title.BackgroundTransparency = 1
+title.Text = "物件排列工具 (可拖曳)"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 16
+title.Parent = frame
+
+local function makeButton(text, y, color)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -20, 0, 36)
+	b.Position = UDim2.new(0, 10, 0, y)
+	b.BackgroundColor3 = color
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.SourceSansBold
+	b.TextSize = 16
+	b.AutoButtonColor = true
+	b.Parent = frame
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+	return b
+end
+
+local ON_COLOR = Color3.fromRGB(46, 160, 90)
+local OFF_COLOR = Color3.fromRGB(150, 60, 60)
+
+local runBtn = makeButton("傳送全部物件", 34, Color3.fromRGB(50, 110, 200))
+local autoBtn = makeButton("持續偵測：關", 76, OFF_COLOR)
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 0, 24)
+status.Position = UDim2.new(0, 10, 0, 118)
+status.BackgroundTransparency = 1
+status.TextColor3 = Color3.fromRGB(200, 200, 200)
+status.Font = Enum.Font.SourceSans
+status.TextSize = 14
+status.Text = "已排列：0 / " .. #slots
+status.Parent = frame
+
+updateStatus = function()
+	local used = 0
+	for _, slot in ipairs(slots) do
+		if slot.item then used += 1 end
+	end
+	status.Text = string.format("已排列：%d / %d", used, #slots)
+end
+
+-- 按鈕：單次傳送
+runBtn.MouseButton1Click:Connect(function()
+	local n = scan()
+	status.Text = string.format("本次新傳送 %d 個", n)
+	task.delay(1.5, updateStatus)
 end)
+
+-- 開關：持續偵測
+local autoOn = false
+local loopToken = 0
+
+local function setAuto(on)
+	autoOn = on
+	autoBtn.Text = on and "持續偵測：開" or "持續偵測：關"
+	autoBtn.BackgroundColor3 = on and ON_COLOR or OFF_COLOR
+
+	loopToken += 1
+	if on then
+		local myToken = loopToken
+		task.spawn(function()
+			while autoOn and myToken == loopToken do
+				scan()
+				task.wait(SCAN_INTERVAL)
+			end
+		end)
+	end
+end
+
+autoBtn.MouseButton1Click:Connect(function()
+	setAuto(not autoOn)
+end)
+
+-- 拖曳視窗
+do
+	local dragging, dragStart, startPos
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end

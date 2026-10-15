@@ -1,35 +1,158 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+--// 設定
 local CONFIG = {
-	-- ...其他設定不變...
-	MonsterScriptName = "AIScript", -- 改成你怪物底下那個腳本的實際名稱
+	Enabled = true,
+	ToggleKey = Enum.KeyCode.K,
+	ShowPlayers = true,
+	ShowMonsters = true,
+	MaxDistance = 500,
+	PlayerColor = Color3.fromRGB(0, 170, 255),
+	MonsterColor = Color3.fromRGB(255, 60, 60),
 }
 
--- 判斷類型：玩家 / 怪物 / 都不是(回傳 nil)
+local gui = Instance.new("ScreenGui")
+gui.Name = "ESP"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local tracked = {} -- [model] = {highlight, billboard, label, humanoid, kind}
+
+local function getRoot(model)
+	return model:FindFirstChild("HumanoidRootPart")
+		or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function removeTarget(model)
+	local data = tracked[model]
+	if not data then return end
+	data.highlight:Destroy()
+	data.billboard:Destroy()
+	data.conn:Disconnect()
+	tracked[model] = nil
+end
+
+-- 分類：玩家 / 怪物（直接在 Workspace 底下）/ nil（資料夾內的 NPC，忽略）
 local function classify(model)
 	if Players:GetPlayerFromCharacter(model) then
 		return "Player"
 	end
-	if model:FindFirstChild(CONFIG.MonsterScriptName) then
+	if model.Parent == workspace then
 		return "Monster"
 	end
 	return nil
 end
 
-local function tryAdd(inst)
-	if not (inst:IsA("Humanoid") and inst.Parent and inst.Parent:IsA("Model")) then
-		return
-	end
-	local model = inst.Parent
+local function addTarget(model, kind)
+	if tracked[model] or model == LocalPlayer.Character then return end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = getRoot(model)
+	if not humanoid or not root then return end
 
-	local kind = classify(model)
-	if kind then
-		addTarget(model, kind)
-		return
-	end
+	local color = kind == "Player" and CONFIG.PlayerColor or CONFIG.MonsterColor
 
-	-- 怪物剛生成時，腳本可能還沒複製到客戶端，等一下再判斷
-	task.spawn(function()
-		if model:WaitForChild(CONFIG.MonsterScriptName, 5) then
-			addTarget(model, "Monster")
+	local highlight = Instance.new("Highlight")
+	highlight.Adornee = model
+	highlight.FillColor = color
+	highlight.OutlineColor = color
+	highlight.FillTransparency = 0.6
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Parent = gui
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Adornee = root
+	billboard.Size = UDim2.fromOffset(200, 50)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = gui
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 0.3
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.Parent = billboard
+
+	-- 模型被刪除，或被移到資料夾（不再直接在 Workspace）時移除
+	local conn
+	conn = model.AncestryChanged:Connect(function()
+		if not model:IsDescendantOf(workspace) or classify(model) == nil then
+			removeTarget(model)
 		end
 	end)
+
+	tracked[model] = {
+		highlight = highlight,
+		billboard = billboard,
+		label = label,
+		humanoid = humanoid,
+		kind = kind,
+		conn = conn,
+	}
 end
+
+local function tryAdd(inst)
+	if inst:IsA("Humanoid") and inst.Parent and inst.Parent:IsA("Model") then
+		local model = inst.Parent
+		local kind = classify(model)
+		if kind then
+			addTarget(model, kind)
+		end
+	end
+end
+
+-- 初始掃描 + 監聽新生成
+for _, d in ipairs(workspace:GetDescendants()) do
+	tryAdd(d)
+end
+workspace.DescendantAdded:Connect(tryAdd)
+
+-- 每幀更新
+RunService.RenderStepped:Connect(function()
+	local char = LocalPlayer.Character
+	local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+
+	for model, data in pairs(tracked) do
+		local root = getRoot(model)
+		local hum = data.humanoid
+
+		if not root or hum.Health <= 0 then
+			removeTarget(model)
+		else
+			local allowed = CONFIG.Enabled
+				and ((data.kind == "Player" and CONFIG.ShowPlayers)
+				or (data.kind == "Monster" and CONFIG.ShowMonsters))
+
+			local dist = myRoot and (root.Position - myRoot.Position).Magnitude or 0
+			local visible = allowed and dist <= CONFIG.MaxDistance
+
+			data.highlight.Enabled = visible
+			data.billboard.Enabled = visible
+
+			if visible then
+				data.label.Text = string.format(
+					"%s\nHP %d/%d  [%d studs]",
+					model.Name,
+					math.floor(hum.Health),
+					math.floor(hum.MaxHealth),
+					math.floor(dist)
+				)
+			end
+		end
+	end
+end)
+
+-- 按鍵開關
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == CONFIG.ToggleKey then
+		CONFIG.Enabled = not CONFIG.Enabled
+	end
+end)

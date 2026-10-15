@@ -4,23 +4,29 @@ local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 
---// 設定
+--// 設定（選單開關會直接改這些值）
 local CONFIG = {
 	Enabled = true,
-	ToggleKey = Enum.KeyCode.K,
 	ShowPlayers = true,
 	ShowMonsters = true,
-	MaxDistance = 500,
+	ShowHealth = true,
+	ShowName = true,
+	ShowDistance = true,
+
+	MenuKey = Enum.KeyCode.K,   -- 隱藏/顯示選單
+	MaxHighlights = 30,         -- Roblox 同時最多約 31 個 Highlight，只對最近的 N 個開啟輪廓
 	PlayerColor = Color3.fromRGB(0, 170, 255),
 	MonsterColor = Color3.fromRGB(255, 60, 60),
 }
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "ESP"
-gui.ResetOnSpawn = false
-gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+local espGui = Instance.new("ScreenGui")
+espGui.Name = "ESP"
+espGui.ResetOnSpawn = false
+espGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-local tracked = {} -- [model] = {highlight, billboard, label, humanoid, kind}
+local tracked = {} -- [model] = {highlight, billboard, label, humanoid, kind, conn}
+
+--// ========== ESP 核心 ==========
 
 local function getRoot(model)
 	return model:FindFirstChild("HumanoidRootPart")
@@ -31,13 +37,13 @@ end
 local function removeTarget(model)
 	local data = tracked[model]
 	if not data then return end
+	data.conn:Disconnect()
 	data.highlight:Destroy()
 	data.billboard:Destroy()
-	data.conn:Disconnect()
 	tracked[model] = nil
 end
 
--- 分類：玩家 / 怪物（直接在 Workspace 底下）/ nil（資料夾內的 NPC，忽略）
+-- 玩家 / 怪物（直接在 Workspace 底下）/ nil（資料夾內的 NPC，忽略）
 local function classify(model)
 	if Players:GetPlayerFromCharacter(model) then
 		return "Player"
@@ -62,14 +68,15 @@ local function addTarget(model, kind)
 	highlight.OutlineColor = color
 	highlight.FillTransparency = 0.6
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.Parent = gui
+	highlight.Parent = espGui
 
 	local billboard = Instance.new("BillboardGui")
 	billboard.Adornee = root
-	billboard.Size = UDim2.fromOffset(200, 50)
+	billboard.Size = UDim2.fromOffset(200, 40)
 	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
 	billboard.AlwaysOnTop = true
-	billboard.Parent = gui
+	billboard.MaxDistance = math.huge -- 不受距離影響
+	billboard.Parent = espGui
 
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.fromScale(1, 1)
@@ -77,12 +84,10 @@ local function addTarget(model, kind)
 	label.TextColor3 = color
 	label.TextStrokeTransparency = 0.3
 	label.Font = Enum.Font.GothamBold
-	label.TextSize = 14
+	label.TextSize = 13
 	label.Parent = billboard
 
-	-- 模型被刪除，或被移到資料夾（不再直接在 Workspace）時移除
-	local conn
-	conn = model.AncestryChanged:Connect(function()
+	local conn = model.AncestryChanged:Connect(function()
 		if not model:IsDescendantOf(workspace) or classify(model) == nil then
 			removeTarget(model)
 		end
@@ -108,51 +113,193 @@ local function tryAdd(inst)
 	end
 end
 
--- 初始掃描 + 監聽新生成
 for _, d in ipairs(workspace:GetDescendants()) do
 	tryAdd(d)
 end
 workspace.DescendantAdded:Connect(tryAdd)
 
--- 每幀更新
 RunService.RenderStepped:Connect(function()
 	local char = LocalPlayer.Character
 	local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+	local myPos = myRoot and myRoot.Position or workspace.CurrentCamera.CFrame.Position
+
+	local list = {}
 
 	for model, data in pairs(tracked) do
 		local root = getRoot(model)
-		local hum = data.humanoid
-
-		if not root or hum.Health <= 0 then
+		if not root or data.humanoid.Health <= 0 then
 			removeTarget(model)
 		else
 			local allowed = CONFIG.Enabled
 				and ((data.kind == "Player" and CONFIG.ShowPlayers)
 				or (data.kind == "Monster" and CONFIG.ShowMonsters))
 
-			local dist = myRoot and (root.Position - myRoot.Position).Magnitude or 0
-			local visible = allowed and dist <= CONFIG.MaxDistance
-
-			data.highlight.Enabled = visible
-			data.billboard.Enabled = visible
-
-			if visible then
-				data.label.Text = string.format(
-					"%s\nHP %d/%d  [%d studs]",
-					model.Name,
-					math.floor(hum.Health),
-					math.floor(hum.MaxHealth),
-					math.floor(dist)
-				)
+			if allowed then
+				table.insert(list, {
+					model = model,
+					data = data,
+					dist = (root.Position - myPos).Magnitude,
+				})
+			else
+				data.highlight.Enabled = false
+				data.billboard.Enabled = false
 			end
 		end
 	end
+
+	-- 由近到遠，輪廓只開最近的 N 個，其餘仍顯示文字
+	table.sort(list, function(a, b) return a.dist < b.dist end)
+
+	for i, item in ipairs(list) do
+		local data, model = item.data, item.model
+
+		local lines = {}
+		if CONFIG.ShowName then
+			table.insert(lines, model.Name)
+		end
+		local info = {}
+		if CONFIG.ShowHealth then
+			table.insert(info, string.format("HP %d/%d",
+				math.floor(data.humanoid.Health), math.floor(data.humanoid.MaxHealth)))
+		end
+		if CONFIG.ShowDistance then
+			table.insert(info, string.format("[%d studs]", math.floor(item.dist)))
+		end
+		if #info > 0 then
+			table.insert(lines, table.concat(info, "  "))
+		end
+
+		data.label.Text = table.concat(lines, "\n")
+		data.billboard.Enabled = #lines > 0
+		data.highlight.Enabled = i <= CONFIG.MaxHighlights
+	end
 end)
 
--- 按鍵開關
+--// ========== 選單 UI ==========
+
+local menuGui = Instance.new("ScreenGui")
+menuGui.Name = "ESPMenu"
+menuGui.ResetOnSpawn = false
+menuGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local function addCorner(obj, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = obj
+end
+
+local ROWS = {
+	{ "Enabled", "開啟 ESP" },
+	{ "ShowPlayers", "顯示玩家" },
+	{ "ShowMonsters", "顯示怪物" },
+	{ "ShowHealth", "顯示血量" },
+	{ "ShowName", "顯示名稱" },
+	{ "ShowDistance", "顯示距離" },
+}
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(220, 44 + #ROWS * 34 + 6)
+frame.Position = UDim2.new(0, 20, 0.5, -120)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+frame.BorderSizePixel = 0
+frame.Parent = menuGui
+addCorner(frame, 10)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+title.BorderSizePixel = 0
+title.Text = "ESP 選單（拖曳移動 / K 隱藏）"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.Parent = frame
+addCorner(title, 10)
+
+-- 拖曳
+local dragging, dragStart, startPos
+title.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- 開關列
+local ON_COLOR = Color3.fromRGB(0, 200, 100)
+local OFF_COLOR = Color3.fromRGB(90, 90, 100)
+
+for i, row in ipairs(ROWS) do
+	local key, text = row[1], row[2]
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -20, 0, 28)
+	btn.Position = UDim2.fromOffset(10, 44 + (i - 1) * 34)
+	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+	btn.Text = ""
+	btn.AutoButtonColor = true
+	btn.Parent = frame
+	addCorner(btn, 6)
+
+	local name = Instance.new("TextLabel")
+	name.Size = UDim2.new(1, -60, 1, 0)
+	name.Position = UDim2.fromOffset(10, 0)
+	name.BackgroundTransparency = 1
+	name.Text = text
+	name.TextColor3 = Color3.new(1, 1, 1)
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.Font = Enum.Font.GothamMedium
+	name.TextSize = 14
+	name.Parent = btn
+
+	local pill = Instance.new("Frame")
+	pill.Size = UDim2.fromOffset(36, 18)
+	pill.Position = UDim2.new(1, -46, 0.5, -9)
+	pill.BorderSizePixel = 0
+	pill.Parent = btn
+	addCorner(pill, 9)
+
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.fromOffset(14, 14)
+	knob.BackgroundColor3 = Color3.new(1, 1, 1)
+	knob.BorderSizePixel = 0
+	knob.Parent = pill
+	addCorner(knob, 7)
+
+	local function refresh()
+		local on = CONFIG[key]
+		pill.BackgroundColor3 = on and ON_COLOR or OFF_COLOR
+		knob.Position = on and UDim2.fromOffset(20, 2) or UDim2.fromOffset(2, 2)
+	end
+
+	btn.Activated:Connect(function()
+		CONFIG[key] = not CONFIG[key]
+		refresh()
+	end)
+	refresh()
+end
+
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
-	if input.KeyCode == CONFIG.ToggleKey then
-		CONFIG.Enabled = not CONFIG.Enabled
+	if input.KeyCode == CONFIG.MenuKey then
+		menuGui.Enabled = not menuGui.Enabled
 	end
 end)

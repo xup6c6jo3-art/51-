@@ -1,0 +1,74 @@
+-- =========================================================
+-- 死亡後：每秒一次、共 2 秒，把 NoSpawnKill 移到玩家位置
+-- =========================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local localPlayer = Players.LocalPlayer
+
+local DURATION = 2   -- 持續秒數
+local INTERVAL = 1   -- 每幾秒移動一次
+
+-- 移動單一物件（Part / Model 都適用）
+local function moveObj(obj, cf)
+	if obj:IsA("BasePart") or obj:IsA("Model") then
+		obj:PivotTo(cf)
+		return 1
+	end
+	return 0
+end
+
+-- 把所有 NoSpawnKill 移到指定位置
+local function moveAll(cf)
+	local count = 0
+
+	-- 1. Workspace 底下直接的 NoSpawnKill（一直都在）
+	for _, obj in ipairs(Workspace:GetChildren()) do
+		if obj.Name == "NoSpawnKill" then
+			count += moveObj(obj, cf)
+		end
+	end
+
+	-- 2. Workspace > Ground > NoSpawnKills 內的物件（一直都在）
+	local ground = Workspace:FindFirstChild("Ground")
+	local folder = ground and ground:FindFirstChild("NoSpawnKills")
+	if folder then
+		for _, obj in ipairs(folder:GetChildren()) do
+			count += moveObj(obj, cf)
+		end
+	end
+
+	-- 3. Workspace > NightCity 底下的 NoSpawnKill（不一定存在，每次都重新偵測）
+	local nightCity = Workspace:FindFirstChild("NightCity")
+	if nightCity then
+		for _, obj in ipairs(nightCity:GetChildren()) do
+			if obj.Name == "NoSpawnKill" then
+				count += moveObj(obj, cf)
+			end
+		end
+	end
+
+	return count
+end
+
+-- 死亡處理
+local function onCharacter(character)
+	local humanoid = character:WaitForChild("Humanoid")
+	local hrp = character:WaitForChild("HumanoidRootPart")
+
+	humanoid.Died:Connect(function()
+		local deathCFrame = hrp.CFrame -- 死亡當下的位置
+
+		for _ = 1, math.ceil(DURATION / INTERVAL) do
+			local n = moveAll(deathCFrame)
+			print("💀 已將 " .. n .. " 個 NoSpawnKill 移到你的位置")
+			task.wait(INTERVAL)
+		end
+	end)
+end
+
+-- 目前角色 + 之後每次重生的角色都綁定
+if localPlayer.Character then
+	task.spawn(onCharacter, localPlayer.Character)
+end
+localPlayer.CharacterAdded:Connect(onCharacter)

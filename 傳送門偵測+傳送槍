@@ -1,0 +1,448 @@
+-- =========================================================
+-- 合併面板 UI (LocalScript)
+-- 放置位置：StarterPlayer > StarterPlayerScripts
+-- 外觀：畫面最上方掛著一個面板，右側有小方塊按鈕（▲/▼）可收起/展開
+--   上半部：顯示「偵測到了是：…」
+--   下半部：[持續偵測] [傳送全部物件] [偵測]
+-- 功能：
+--   偵測           → 檢查 Workspace 裡有哪些指定資料夾，顯示對應名稱
+--   傳送全部物件   → 掃描一次，把找到的物件排到兩條線上
+--   持續偵測       → 每 2 秒掃描一次，只處理新出現的物件
+-- =========================================================
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ================= 設定區：偵測 =================
+-- label：偵測到時顯示的文字 / folder：Workspace 底下的資料夾 / item：資料夾裡的物件
+local TARGETS = {
+	{ label = "骷顱頭", folder = "Castle",        item = "Scarecrow" },
+	{ label = "靜音",   folder = "CyberLand",     item = "Mech O' Lantern" },
+	{ label = "黑色",   folder = "DeadGround",    item = "LXD - 9999 Cell" },
+	{ label = "RGB",    folder = "CorruptedZone", item = "RGB - 9999 Cell" },
+	{ label = "尖叫",   folder = "NightCity",     item = "NoSpawnKill" },
+}
+
+-- true  = 資料夾和裡面的物件都要存在才算偵測到（較準確）
+-- false = 只要資料夾存在就算偵測到
+local REQUIRE_ITEM = true
+
+-- ================= 設定區：排列 =================
+local TARGET_Y = 1148
+local BLOCK_SIZE = 5       -- 物件間隔
+local SCAN_INTERVAL = 2    -- 持續偵測間隔（秒）
+local YIELD_EVERY = 5      -- 每處理幾個物件讓出一次畫面，避免卡頓
+local STAND_ON_Y = false   -- true = 物件「底部」貼齊 TARGET_Y；false = 主零件中心在 TARGET_Y
+
+local LINES = {
+	{ Vector3.new(596.51, TARGET_Y, 785.83), Vector3.new(596.69, TARGET_Y, 715.76) },
+	{ Vector3.new(614.35, TARGET_Y, 782.40), Vector3.new(614.96, TARGET_Y, 715.58) },
+}
+
+-- path：Workspace 底下的資料夾路徑（空表 = 直接在 Workspace 底下）
+-- names：要抓的物件名稱（必須完全一致）
+local SOURCES = {
+	{ path = { "Floor 2" },       names = { "GetHEXGun", "GetRedMissile" } },
+	{ path = { "IceZone" },       names = { "GetIceCrossbow" } },
+	{ path = { "LavaZone" },      names = { "Escape" } },
+	{ path = {},                  names = { "Exit" } },
+	{ path = { "CorruptedZone" }, names = { "RGB - 9999 Cell" } },
+	{ path = { "DeadGround" },    names = { "LXD - 9999 Cell" } },
+	{ path = { "CyberLand" },     names = { "GetMechGun" } },
+}
+-- ==========================================
+
+-- ================= UI =================
+local PANEL_W, PANEL_H = 420, 170
+local TAB_W, TAB_H = 44, 36
+local TWEEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local BG_COLOR = Color3.fromRGB(30, 30, 36)
+local ON_COLOR = Color3.fromRGB(46, 160, 90)
+local OFF_COLOR = Color3.fromRGB(150, 60, 60)
+local BLUE_COLOR = Color3.fromRGB(50, 110, 200)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "MergedPanelUI"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true -- 讓面板真的貼在畫面最上緣
+gui.DisplayOrder = 10
+gui.Parent = playerGui
+
+-- 裁切容器：面板收起時不會跑到畫面外面去
+local clip = Instance.new("Frame")
+clip.Name = "Clip"
+clip.Size = UDim2.fromOffset(PANEL_W, PANEL_H)
+clip.Position = UDim2.new(0.5, -(PANEL_W + TAB_W) / 2, 0, 0)
+clip.BackgroundTransparency = 1
+clip.ClipsDescendants = true
+clip.Parent = gui
+
+local SHOWN_POS = UDim2.fromOffset(0, -10)
+local HIDDEN_POS = UDim2.fromOffset(0, -(PANEL_H + 14))
+
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.fromOffset(PANEL_W, PANEL_H + 10)
+panel.Position = SHOWN_POS
+panel.BackgroundColor3 = BG_COLOR
+panel.BorderSizePixel = 0
+panel.Parent = clip
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+
+-- 上半部：偵測結果
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 20)
+title.Position = UDim2.fromOffset(10, 20)
+title.BackgroundTransparency = 1
+title.Text = "偵測到了是："
+title.TextColor3 = Color3.fromRGB(180, 180, 190)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 16
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = panel
+
+local result = Instance.new("TextLabel")
+result.Size = UDim2.new(1, -20, 0, 34)
+result.Position = UDim2.fromOffset(10, 42)
+result.BackgroundTransparency = 1
+result.Text = "尚未偵測"
+result.TextColor3 = Color3.new(1, 1, 1)
+result.Font = Enum.Font.SourceSansBold
+result.TextSize = 24
+result.TextWrapped = true
+result.TextXAlignment = Enum.TextXAlignment.Left
+result.TextYAlignment = Enum.TextYAlignment.Top
+result.Parent = panel
+
+local detail = Instance.new("TextLabel")
+detail.Size = UDim2.new(1, -150, 0, 18)
+detail.Position = UDim2.fromOffset(10, 82)
+detail.BackgroundTransparency = 1
+detail.Text = ""
+detail.TextColor3 = Color3.fromRGB(130, 130, 140)
+detail.Font = Enum.Font.SourceSans
+detail.TextSize = 13
+detail.TextXAlignment = Enum.TextXAlignment.Left
+detail.TextTruncate = Enum.TextTruncate.AtEnd
+detail.Parent = panel
+
+-- 排列狀態（右下角，分隔線上方）
+local status = Instance.new("TextLabel")
+status.Size = UDim2.fromOffset(130, 18)
+status.Position = UDim2.new(1, -140, 0, 82)
+status.BackgroundTransparency = 1
+status.TextColor3 = Color3.fromRGB(200, 200, 200)
+status.Font = Enum.Font.SourceSans
+status.TextSize = 14
+status.TextXAlignment = Enum.TextXAlignment.Right
+status.Text = ""
+status.Parent = panel
+
+-- 分隔線
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -20, 0, 2)
+divider.Position = UDim2.fromOffset(10, 110)
+divider.BackgroundColor3 = Color3.fromRGB(70, 70, 80)
+divider.BorderSizePixel = 0
+divider.Parent = panel
+
+-- 下半部：三個按鈕
+local BTN_W, BTN_H, BTN_GAP = 128, 34, 8
+local BTN_Y = 122
+
+local function makeButton(text, index, color)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.fromOffset(BTN_W, BTN_H)
+	b.Position = UDim2.fromOffset(10 + (index - 1) * (BTN_W + BTN_GAP), BTN_Y)
+	b.BackgroundColor3 = color
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.SourceSansBold
+	b.TextSize = 16
+	b.AutoButtonColor = true
+	b.Parent = panel
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+	return b
+end
+
+local autoBtn = makeButton("持續偵測：關", 1, OFF_COLOR)
+local runBtn = makeButton("傳送全部物件", 2, BLUE_COLOR)
+local detectBtn = makeButton("偵測", 3, BLUE_COLOR)
+
+-- 右側的小方塊（收起/展開）
+local tab = Instance.new("TextButton")
+tab.Name = "Tab"
+tab.Size = UDim2.fromOffset(TAB_W, TAB_H)
+tab.Position = UDim2.new(0.5, (PANEL_W - TAB_W) / 2, 0, 0)
+tab.BackgroundColor3 = BG_COLOR
+tab.BorderSizePixel = 0
+tab.Text = "▲"
+tab.TextColor3 = Color3.new(1, 1, 1)
+tab.Font = Enum.Font.SourceSansBold
+tab.TextSize = 18
+tab.Parent = gui
+Instance.new("UICorner", tab).CornerRadius = UDim.new(0, 6)
+
+-- ---------- 收起 / 展開 ----------
+local expanded = true
+local panelTween
+
+tab.MouseButton1Click:Connect(function()
+	expanded = not expanded
+	tab.Text = expanded and "▲" or "▼"
+	if panelTween then panelTween:Cancel() end
+	panelTween = TweenService:Create(panel, TWEEN_INFO, {
+		Position = expanded and SHOWN_POS or HIDDEN_POS,
+	})
+	panelTween:Play()
+end)
+
+-- ================= 功能：偵測 =================
+local detecting = false
+
+local function detect()
+	if detecting then return end
+	detecting = true
+
+	local labels, paths = {}, {}
+	for _, t in ipairs(TARGETS) do
+		local folder = workspace:FindFirstChild(t.folder)
+		if folder and (not REQUIRE_ITEM or folder:FindFirstChild(t.item)) then
+			table.insert(labels, t.label)
+			table.insert(paths, t.folder .. "/" .. t.item)
+		end
+	end
+
+	if #labels > 0 then
+		result.Text = table.concat(labels, "、")
+		result.TextColor3 = Color3.fromRGB(120, 230, 150)
+		detail.Text = table.concat(paths, ", ")
+	else
+		result.Text = "沒有偵測到"
+		result.TextColor3 = Color3.fromRGB(230, 120, 120)
+		detail.Text = ""
+	end
+
+	detecting = false
+end
+
+detectBtn.MouseButton1Click:Connect(detect)
+
+-- ================= 功能：排列 =================
+-- 把 names 轉成查表用的 set，查詢比 ipairs 快
+for _, src in ipairs(SOURCES) do
+	local set = {}
+	for _, n in ipairs(src.names) do
+		set[n] = true
+	end
+	src.nameSet = set
+end
+
+-- 預先計算所有排列位置
+local slots = {}
+for _, line in ipairs(LINES) do
+	local a, b = line[1], line[2]
+	local len = (b - a).Magnitude
+	local count = math.floor(len / BLOCK_SIZE)
+	for i = 0, count do
+		table.insert(slots, { pos = a:Lerp(b, (i * BLOCK_SIZE) / len), item = nil })
+	end
+end
+
+-- 已處理過的物件（弱引用，物件被銷毀後會自動回收）
+local placed = setmetatable({}, { __mode = "k" })
+local warnedFull = false
+
+local function updateStatus()
+	local used = 0
+	for _, slot in ipairs(slots) do
+		if slot.item then used += 1 end
+	end
+	status.Text = string.format("已排列：%d / %d", used, #slots)
+end
+updateStatus()
+
+-- 釋放已消失物件佔用的位置
+local function releaseSlots()
+	for _, slot in ipairs(slots) do
+		local item = slot.item
+		if item and not item:IsDescendantOf(workspace) then
+			slot.item = nil
+		end
+	end
+	warnedFull = false
+end
+
+local function takeFreeSlot()
+	for _, slot in ipairs(slots) do
+		if not slot.item then
+			return slot
+		end
+	end
+	return nil
+end
+
+-- 遞歸尋找主零件（用來當對位基準）
+-- 優先順序：自己是 BasePart → 底下任何層的 Head → PrimaryPart → 最大的可見零件
+local function getMainPart(item)
+	if item:IsA("BasePart") then
+		return item
+	end
+
+	local head = item:FindFirstChild("Head", true)
+	if head and head:IsA("BasePart") then
+		return head
+	end
+
+	if item:IsA("Model") and item.PrimaryPart then
+		return item.PrimaryPart
+	end
+
+	-- 找體積最大的零件；先略過透明的（常是隱形的觸發/碰撞用零件）
+	local best, bestVol = nil, -1
+	local bestAny, bestAnyVol = nil, -1
+	for _, d in ipairs(item:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local s = d.Size
+			local vol = s.X * s.Y * s.Z
+			if vol > bestAnyVol then
+				bestAny, bestAnyVol = d, vol
+			end
+			if d.Transparency < 1 and vol > bestVol then
+				best, bestVol = d, vol
+			end
+		end
+	end
+	return best or bestAny
+end
+
+local function getBounds(item)
+	if item:IsA("Model") then
+		return item:GetBoundingBox()
+	end
+	return item.CFrame, item.Size
+end
+
+local function placeItem(item, pos)
+	-- 先鎖住所有零件（遞歸），避免物理推擠
+	if item:IsA("BasePart") then
+		item.CanCollide = false
+		item.Anchored = true
+	end
+	for _, d in ipairs(item:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.CanCollide = false
+			d.Anchored = true
+		end
+	end
+
+	if not (item:IsA("Model") or item:IsA("BasePart")) then
+		warn("無法移動（不是 Model 或 BasePart）：", item:GetFullName())
+		return
+	end
+
+	local mainPart = getMainPart(item)
+	if not mainPart then
+		-- 找不到任何零件，只好退回用 Pivot
+		item:PivotTo(CFrame.new(pos))
+		return
+	end
+
+	-- 讓「主零件」剛好落在目標位置：整個物件平移同樣的位移量，保持原本方向與形狀
+	item:PivotTo(item:GetPivot() + (pos - mainPart.Position))
+
+	-- 可選：讓物件底部貼齊 TARGET_Y，避免陷進地板
+	if STAND_ON_Y then
+		local cf, size = getBounds(item)
+		local dy = TARGET_Y - (cf.Position.Y - size.Y / 2)
+		item:PivotTo(item:GetPivot() + Vector3.new(0, dy, 0))
+	end
+end
+
+local function resolveContainer(path)
+	local node = workspace
+	for _, name in ipairs(path) do
+		node = node:FindFirstChild(name)
+		if not node then
+			return nil -- 資料夾不存在就忽略
+		end
+	end
+	return node
+end
+
+local scanning = false
+local function scan()
+	if scanning then return 0 end
+	scanning = true
+
+	releaseSlots()
+	local moved = 0
+
+	for _, src in ipairs(SOURCES) do
+		local container = resolveContainer(src.path)
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if src.nameSet[child.Name] and not placed[child] then
+					local slot = takeFreeSlot()
+					if not slot then
+						if not warnedFull then
+							warnedFull = true
+							warn("排列位置已滿，部分物件未排列")
+						end
+						scanning = false
+						updateStatus()
+						return moved
+					end
+					slot.item = child
+					placed[child] = true
+					placeItem(child, slot.pos)
+					moved += 1
+					if moved % YIELD_EVERY == 0 then
+						task.wait()
+					end
+				end
+			end
+		end
+	end
+
+	scanning = false
+	updateStatus()
+	return moved
+end
+
+-- 按鈕：單次傳送
+runBtn.MouseButton1Click:Connect(function()
+	local n = scan()
+	status.Text = string.format("本次新傳送 %d 個", n)
+	task.delay(1.5, updateStatus)
+end)
+
+-- 開關：持續偵測
+local autoOn = false
+local loopToken = 0
+
+local function setAuto(on)
+	autoOn = on
+	autoBtn.Text = on and "持續偵測：開" or "持續偵測：關"
+	autoBtn.BackgroundColor3 = on and ON_COLOR or OFF_COLOR
+
+	loopToken += 1
+	if on then
+		local myToken = loopToken
+		task.spawn(function()
+			while autoOn and myToken == loopToken do
+				scan()
+				task.wait(SCAN_INTERVAL)
+			end
+		end)
+	end
+end
+
+autoBtn.MouseButton1Click:Connect(function()
+	setAuto(not autoOn)
+end)

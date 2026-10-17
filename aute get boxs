@@ -5,7 +5,7 @@ local LocalPlayer = Players.LocalPlayer
 local TARGET_NAMES = { SupplyCrate = true, SupplyBall = true }
 local MAX_Y = 5000                 -- 超過此高度的物件視為無效
 local INSTANT_RANGE = 30           -- 一鍵瞬按距離
-local AUTO_STEP_DELAY = 0.6        -- 自動模式:傳送後等待秒數
+local AUTO_STEP_DELAY = 0.3        -- 自動模式:傳送後等待秒數
 local AUTO_FIRE_PROMPT = true      -- 自動模式:到達後是否自動觸發 ProximityPrompt
 local OFFSETS = {                  -- 傳送時相對物件的偏移
     SupplyCrate = Vector3.new(0, 3, 0),

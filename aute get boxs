@@ -1,308 +1,282 @@
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
-local TargetParent = LocalPlayer:WaitForChild("PlayerGui")
 
+-- ==================== 設定區 ====================
+local TARGET_NAMES = { SupplyCrate = true, SupplyBall = true }
+local MAX_Y = 5000                 -- 超過此高度的物件視為無效
+local INSTANT_RANGE = 30           -- 一鍵瞬按距離
+local AUTO_STEP_DELAY = 0.6        -- 自動模式:傳送後等待秒數
+local AUTO_FIRE_PROMPT = true      -- 自動模式:到達後是否自動觸發 ProximityPrompt
+local OFFSETS = {                  -- 傳送時相對物件的偏移
+    SupplyCrate = Vector3.new(0, 3, 0),
+    SupplyBall  = Vector3.new(0, 0, 0), -- 沿用原本球的位置(球下方),不合適可改成 0, 3, 0
+}
+
+-- ==================== 工具函式 ====================
+local function getHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getObjectPart(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        return obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return obj:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- 收集有效目標,name 為 nil 時收集全部類型
+local function collectTargets(name)
+    local list = {}
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if TARGET_NAMES[obj.Name] and (not name or obj.Name == name) then
+            local part = getObjectPart(obj)
+            if part and part.Position.Y <= MAX_Y then
+                table.insert(list, { object = obj, part = part, name = obj.Name })
+            end
+        end
+    end
+    return list
+end
+
+local function teleportTo(target)
+    local hrp = getHRP()
+    if not hrp or not target.part.Parent then return false end
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.CFrame = CFrame.new(target.part.Position + (OFFSETS[target.name] or Vector3.new(0, 3, 0)))
+    return true
+end
+
+local function firePrompt(obj)
+    if not fireproximityprompt then return false end
+    local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if not prompt then return false end
+    return pcall(fireproximityprompt, prompt)
+end
+
+-- ==================== UI 建立 ====================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Area51TP_GUI_V2"
-ScreenGui.Parent = TargetParent
 ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Position = UDim2.new(0.3, 0, 0.15, 0)
-MainFrame.Size = UDim2.new(0, 260, 0, 480) -- 稍微加高以容納新按鈕
+MainFrame.Size = UDim2.new(0, 260, 0, 480)
 MainFrame.Active = true
 MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
 
--- 標題欄
 local Title = Instance.new("TextLabel")
-Title.Parent = MainFrame
 Title.Size = UDim2.new(1, 0, 0, 36)
 Title.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
 Title.BorderSizePixel = 0
 Title.Text = "Area51 綜合控制選單"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 16
 Title.Font = Enum.Font.SourceSansBold
+Title.Parent = MainFrame
 
--- 滾動清單
 local Scroll = Instance.new("ScrollingFrame")
-Scroll.Parent = MainFrame
 Scroll.Position = UDim2.new(0, 5, 0, 40)
 Scroll.Size = UDim2.new(1, -10, 1, -45)
 Scroll.BackgroundTransparency = 1
 Scroll.BorderSizePixel = 0
-Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.CanvasSize = UDim2.new()
 Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 Scroll.ScrollBarThickness = 6
+Scroll.Parent = MainFrame
 
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.Parent = Scroll
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 4)
+local layout = Instance.new("UIListLayout")
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 4)
+layout.Parent = Scroll
 
--- 狀態變數 (SupplyBall 持續傳送狀態)
-local ballLoopEnabled = false
-local ballLoopConnection = nil
+local DYNAMIC = "Dyn" -- 動態項目的名稱標記,重新整理時只清除這些
 
--- 建立分類標題標籤
-local function createHeader(text)
-    local header = Instance.new("TextLabel")
-    header.Parent = Scroll
-    header.Size = UDim2.new(1, -8, 0, 26)
-    header.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-    header.BorderSizePixel = 0
-    header.Text = "  " .. text
-    header.TextColor3 = Color3.fromRGB(255, 215, 0)
-    header.TextSize = 14
-    header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Font = Enum.Font.SourceSansBold
-    return header
+local function createHeader(text, order, dynamic)
+    local h = Instance.new("TextLabel")
+    h.Name = dynamic and DYNAMIC or "Static"
+    h.LayoutOrder = order
+    h.Size = UDim2.new(1, -8, 0, 26)
+    h.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    h.BorderSizePixel = 0
+    h.Text = "  " .. text
+    h.TextColor3 = Color3.fromRGB(255, 215, 0)
+    h.TextSize = 14
+    h.TextXAlignment = Enum.TextXAlignment.Left
+    h.Font = Enum.Font.SourceSansBold
+    h.Parent = Scroll
+    return h
 end
 
--- 建立一般按鈕 (用於箱子與功能)
-local function createBtn(text, enabled, callback)
-    local btn = Instance.new("TextButton")
-    btn.Parent = Scroll
-    btn.Size = UDim2.new(1, -8, 0, 30)
-    btn.BackgroundColor3 = enabled and Color3.fromRGB(50, 50, 55) or Color3.fromRGB(30, 30, 32)
-    btn.BorderSizePixel = 0
-    btn.Text = text
-    btn.TextColor3 = enabled and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(100, 100, 100)
-    btn.TextSize = 13
-    btn.Font = Enum.Font.SourceSans
-    btn.Active = enabled
-    btn.AutoButtonColor = enabled
-    
+local function createBtn(text, order, dynamic, enabled, callback)
+    local b = Instance.new("TextButton")
+    b.Name = dynamic and DYNAMIC or "Static"
+    b.LayoutOrder = order
+    b.Size = UDim2.new(1, -8, 0, 30)
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextSize = 13
+    b.Font = Enum.Font.SourceSans
+    b.BackgroundColor3 = enabled and Color3.fromRGB(50, 50, 55) or Color3.fromRGB(30, 30, 32)
+    b.TextColor3 = enabled and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(100, 100, 100)
+    b.Active = enabled
+    b.AutoButtonColor = enabled
+    b.Parent = Scroll
     if enabled and callback then
-        btn.MouseButton1Click:Connect(function()
-            callback()
-        end)
+        b.MouseButton1Click:Connect(callback)
     end
-    return btn
+    return b
 end
 
--- 取得物件座標
-local function getObjectPosition(obj)
-    if obj:IsA("Model") then
-        if obj.PrimaryPart then return obj.PrimaryPart.Position end
-        local part = obj:FindFirstChildWhichIsA("BasePart")
-        if part then return part.Position end
-    elseif obj:IsA("BasePart") then
-        return obj.Position
-    end
-    return nil
-end
-
--- 取得物件對應的 Part (供持續傳送對齊用)
-local function getObjectPart(obj)
-    if not obj then return nil end
-    if obj:IsA("Model") and obj.PrimaryPart then return obj.PrimaryPart end
-    if obj:IsA("BasePart") then return obj end
-    return obj:FindFirstChildWhichIsA("BasePart")
-end
-
--- 設定角色穿牆 (Noclip)
-local function setNoclip(enabled)
-    local char = LocalPlayer.Character
-    if char then
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = not enabled
-            end
-        end
-    end
-end
-
--- 重新整理整個介面與偵測邏輯
-local function refreshUI()
-    -- 清除舊的 UI 項目
-    for _, child in ipairs(Scroll:GetChildren()) do
-        if child:IsA("GuiObject") and child ~= UIListLayout then
-            child:Destroy()
-        end
-    end
-
-    -- ==================== 0. 快捷瞬按功能 (30距離內單次觸發) ====================
-    createHeader("快捷瞬按 (30距離內)")
-    local instantBtn = Instance.new("TextButton")
-    instantBtn.Parent = Scroll
-    instantBtn.Size = UDim2.new(1, -8, 0, 30)
-    instantBtn.BackgroundColor3 = Color3.fromRGB(70, 90, 150)
-    instantBtn.BorderSizePixel = 0
-    instantBtn.Text = "一鍵瞬按 30 內箱子/球 (按一下執行)"
-    instantBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
-    instantBtn.TextSize = 13
-    instantBtn.Font = Enum.Font.SourceSansBold
-    
-    instantBtn.MouseButton1Click:Connect(function()
-        if LocalPlayer.Character then
-            local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local count = 0
-                for _, obj in ipairs(workspace:GetChildren()) do
-                    if obj.Name == "SupplyCrate" or obj.Name == "SupplyBall" then
-                        local pos = getObjectPosition(obj)
-                        if pos and pos.Y <= 5000 then
-                            local distance = (hrp.Position - pos).Magnitude
-                            if distance <= 30 then
-                                local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-                                if prompt then
-                                    pcall(function()
-                                        fireproximityprompt(prompt)
-                                        count = count + 1
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-                -- 點擊後短暫顯示回饋文字
-                instantBtn.Text = string.format("已瞬按 %d 個目標！", count)
-                task.delay(1, function()
-                    if instantBtn and instantBtn.Parent then
-                        instantBtn.Text = "一鍵瞬按 30 內箱子/球 (按一下執行)"
-                    end
-                end)
-            end
-        end
+-- 暫時顯示回饋文字
+local function flashText(btn, text, restore)
+    btn.Text = text
+    task.delay(1.2, function()
+        if btn.Parent then btn.Text = restore end
     end)
-
-    -- ==================== 1. SupplyCrate (箱子區塊) ====================
-    createHeader("補給箱 (SupplyCrate)")
-    local validCrates = {}
-    
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj.Name == "SupplyCrate" then
-            local pos = getObjectPosition(obj)
-            if pos and pos.Y <= 5000 then
-                table.insert(validCrates, {object = obj, position = pos})
-            end
-        end
-    end
-
-    if #validCrates > 0 then
-        for i, data in ipairs(validCrates) do
-            local btnText = string.format("傳送到箱子 #%d (Y: %.1f)", i, data.position.Y)
-            createBtn(btnText, true, function()
-                local character = LocalPlayer.Character
-                if character and character:FindFirstChild("HumanoidRootPart") then
-                    character.HumanoidRootPart.CFrame = CFrame.new(data.position + Vector3.new(0, 3, 0))
-                end
-            end)
-        end
-    else
-        createBtn("目前無可用補給箱 (已停用)", false, nil)
-    end
-
-    -- ==================== 2. SupplyBall (球區塊) ====================
-    createHeader("補給球 (SupplyBall)")
-    local validBalls = {}
-    
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if obj.Name == "SupplyBall" then
-            local pos = getObjectPosition(obj)
-            if pos and pos.Y <= 5000 then
-                table.insert(validBalls, {object = obj, position = pos})
-            end
-        end
-    end
-
-    local hasBall = #validBalls > 0
-
-    if not hasBall and ballLoopEnabled then
-        ballLoopEnabled = false
-        if ballLoopConnection then
-            ballLoopConnection:Disconnect()
-            ballLoopConnection = nil
-        end
-        setNoclip(false)
-    end
-
-    local ballBtn = Instance.new("TextButton")
-    ballBtn.Parent = Scroll
-    ballBtn.Size = UDim2.new(1, -8, 0, 30)
-    
-    if hasBall then
-        ballBtn.BackgroundColor3 = ballLoopEnabled and Color3.fromRGB(180, 50, 50) or Color3.fromRGB(50, 50, 55)
-        ballBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
-        ballBtn.Text = ballLoopEnabled and "持續傳送補給球: 開" or "持續傳送補給球: 關"
-        ballBtn.Active = true
-        ballBtn.AutoButtonColor = true
-        
-        ballBtn.MouseButton1Click:Connect(function()
-            ballLoopEnabled = not ballLoopEnabled
-            refreshUI()
-            
-            if ballLoopEnabled then
-                if ballLoopConnection then ballLoopConnection:Disconnect() end
-                
-                ballLoopConnection = RunService.Stepped:Connect(function()
-                    local targetObj = nil
-                    for _, obj in ipairs(workspace:GetChildren()) do
-                        if obj.Name == "SupplyBall" then
-                            local p = getObjectPosition(obj)
-                            if p and p.Y <= 5000 then
-                                targetObj = obj
-                                break
-                            end
-                        end
-                    end
-                    
-                    if targetObj and LocalPlayer.Character then
-                        local myHrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                        local targetPart = getObjectPart(targetObj)
-                        
-                        if myHrp and targetPart then
-                            setNoclip(true)
-                            myHrp.Velocity = Vector3.new(0, 0, 0)
-                            myHrp.RotVelocity = Vector3.new(0, 0, 0)
-                            myHrp.CFrame = targetPart.CFrame * CFrame.new(0, -5, 0)
-                        end
-                    else
-                        ballLoopEnabled = false
-                        if ballLoopConnection then
-                            ballLoopConnection:Disconnect()
-                            ballLoopConnection = nil
-                        end
-                        setNoclip(false)
-                        refreshUI()
-                    end
-                end)
-            else
-                if ballLoopConnection then
-                    ballLoopConnection:Disconnect()
-                    ballLoopConnection = nil
-                end
-                setNoclip(false)
-            end
-        end)
-    else
-        ballBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 32)
-        ballBtn.TextColor3 = Color3.fromRGB(100, 100, 100)
-        ballBtn.Text = "目前無可用補給球 (已停用)"
-        ballBtn.Active = false
-        ballBtn.AutoButtonColor = false
-    end
 end
 
--- 初始化執行
-refreshUI()
+-- ==================== 固定區:瞬按 + 自動 ====================
+createHeader("快捷瞬按 (" .. INSTANT_RANGE .. "距離內)", 1)
+local INSTANT_TEXT = "一鍵瞬按 " .. INSTANT_RANGE .. " 內箱子/球"
+local instantBtn = createBtn(INSTANT_TEXT, 2, false, true)
+instantBtn.BackgroundColor3 = Color3.fromRGB(70, 90, 150)
+instantBtn.Font = Enum.Font.SourceSansBold
+instantBtn.MouseButton1Click:Connect(function()
+    local hrp = getHRP()
+    if not hrp then return end
+    local count = 0
+    for _, t in ipairs(collectTargets()) do
+        if (hrp.Position - t.part.Position).Magnitude <= INSTANT_RANGE and firePrompt(t.object) then
+            count += 1
+        end
+    end
+    flashText(instantBtn, string.format("已瞬按 %d 個目標!", count), INSTANT_TEXT)
+end)
 
--- 即時監聽 workspace 內物件生成與移除
-workspace.ChildAdded:Connect(function(child)
-    if child.Name == "SupplyCrate" or child.Name == "SupplyBall" then
-        task.wait(0.3)
-        refreshUI()
+createHeader("自動模式", 3)
+local AUTO_IDLE = "自動依序傳送 (完成後回原位)"
+local autoBtn = createBtn(AUTO_IDLE, 4, false, true)
+autoBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 70)
+autoBtn.Font = Enum.Font.SourceSansBold
+
+local autoRunning = false -- 是否正在執行
+local autoCancel = false  -- 是否被要求停止
+
+local function runAuto()
+    local hrp = getHRP()
+    if not hrp then return end
+
+    local first = collectTargets()
+    if #first == 0 then
+        flashText(autoBtn, "目前沒有箱子或球", AUTO_IDLE)
+        return -- 沒有目標就不動作
+    end
+
+    autoRunning, autoCancel = true, false
+    local origin = hrp.CFrame
+    local visited = {}
+    local done = 0
+
+    autoBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+    autoBtn.Text = "自動中… (再按一次停止)"
+
+    while not autoCancel do
+        hrp = getHRP()
+        if not hrp then break end
+
+        -- 每輪重新掃描,挑最近且尚未去過的目標
+        local best, bestDist
+        for _, t in ipairs(collectTargets()) do
+            if not visited[t.object] then
+                local d = (hrp.Position - t.part.Position).Magnitude
+                if not bestDist or d < bestDist then
+                    best, bestDist = t, d
+                end
+            end
+        end
+        if not best then break end -- 全部跑完
+
+        visited[best.object] = true
+        if teleportTo(best) then
+            done += 1
+            autoBtn.Text = string.format("自動中… 第 %d 個 (再按停止)", done)
+            task.wait(AUTO_STEP_DELAY)
+            if AUTO_FIRE_PROMPT then firePrompt(best.object) end
+            task.wait(AUTO_STEP_DELAY)
+        end
+    end
+
+    -- 最後傳送回原位
+    hrp = getHRP()
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.CFrame = origin
+    end
+
+    autoRunning, autoCancel = false, false
+    autoBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 70)
+    flashText(autoBtn, string.format("完成,共 %d 個,已回原位", done), AUTO_IDLE)
+end
+
+autoBtn.MouseButton1Click:Connect(function()
+    if autoRunning then
+        autoCancel = true
+        autoBtn.Text = "停止中…"
+    else
+        task.spawn(runAuto)
     end
 end)
 
-workspace.ChildRemoved:Connect(function(child)
-    if child.Name == "SupplyCrate" or child.Name == "SupplyBall" then
-        refreshUI()
+-- ==================== 動態區:箱子 / 球清單 ====================
+local function buildSection(title, name, label, startOrder)
+    createHeader(title, startOrder, true)
+    local list = collectTargets(name)
+    if #list == 0 then
+        createBtn("目前無可用" .. label .. " (已停用)", startOrder + 1, true, false)
+        return startOrder + 2
     end
+    for i, t in ipairs(list) do
+        createBtn(
+            string.format("傳送到%s #%d (Y: %.1f)", label, i, t.part.Position.Y),
+            startOrder + i, true, true,
+            function() teleportTo(t) end
+        )
+    end
+    return startOrder + #list + 1
+end
+
+local function refreshUI()
+    for _, child in ipairs(Scroll:GetChildren()) do
+        if child.Name == DYNAMIC then child:Destroy() end
+    end
+    local order = buildSection("補給箱 (SupplyCrate)", "SupplyCrate", "箱子", 10)
+    buildSection("補給球 (SupplyBall)", "SupplyBall", "補給球", order + 1)
+end
+
+-- 合併短時間內多次更新,避免重複重建
+local refreshQueued = false
+local function queueRefresh()
+    if refreshQueued then return end
+    refreshQueued = true
+    task.delay(0.3, function()
+        refreshQueued = false
+        refreshUI()
+    end)
+end
+
+refreshUI()
+
+workspace.ChildAdded:Connect(function(child)
+    if TARGET_NAMES[child.Name] then queueRefresh() end
+end)
+workspace.ChildRemoved:Connect(function(child)
+    if TARGET_NAMES[child.Name] then queueRefresh() end
 end)

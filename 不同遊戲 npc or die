@@ -1,1 +1,197 @@
+-- ESP 三分類：NPC / 玩家 / 警長（LocalScript，放 StarterPlayerScripts 或 StarterGui）
+-- NPC  = 有 Humanoid 但「沒有」JumpingJack
+-- 玩家 = 有 JumpingJack
+-- 警長 = 有名叫 10993025871 的子物件（優先判斷）
 
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+------------------------------------------------------------
+-- 設定
+------------------------------------------------------------
+local SHERIFF_MARK = "10993025871" -- 警長特有的子物件名稱
+
+local COLORS = {
+	NPC = Color3.fromRGB(255, 70, 70),
+	Player = Color3.fromRGB(80, 255, 120),
+	Sheriff = Color3.fromRGB(70, 150, 255),
+}
+local LABELS = { NPC = "NPC", Player = "玩家", Sheriff = "警長" }
+
+local settings = { Master = true, NPC = true, Player = true, Sheriff = true }
+
+------------------------------------------------------------
+-- 分類
+------------------------------------------------------------
+local function classify(model)
+	-- 警長：有名叫 10993025871 的子物件（警長本身也有 JumpingJack，所以要先判斷）
+	if model:FindFirstChild(SHERIFF_MARK) then
+		return "Sheriff"
+	end
+	-- 玩家：有 JumpingJack
+	if model:FindFirstChild("JumpingJack") then
+		return "Player"
+	end
+	-- NPC：沒有 JumpingJack
+	return "NPC"
+end
+
+------------------------------------------------------------
+-- ESP 物件
+------------------------------------------------------------
+local tracked = {} -- [model] = {hl=, bb=, label=}
+
+local function createESP(model)
+	if tracked[model] then return end
+	local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or model.PrimaryPart
+	if not hrp then return end
+
+	local hl = Instance.new("Highlight")
+	hl.Name = "ESP_HL"
+	hl.FillTransparency = 0.6
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = model
+	hl.Parent = model
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "ESP_BB"
+	bb.Size = UDim2.fromOffset(160, 36)
+	bb.StudsOffset = Vector3.new(0, 3.5, 0)
+	bb.AlwaysOnTop = true
+	bb.Adornee = hrp
+	bb.Parent = model
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.TextStrokeTransparency = 0.4
+	label.Parent = bb
+
+	tracked[model] = { hl = hl, bb = bb, label = label }
+end
+
+local function removeESP(model)
+	local d = tracked[model]
+	if not d then return end
+	d.hl:Destroy()
+	d.bb:Destroy()
+	tracked[model] = nil
+end
+
+local function tryTrack(inst)
+	if inst:IsA("Humanoid") then
+		local model = inst.Parent
+		if model and model:IsA("Model") and model ~= LocalPlayer.Character then
+			createESP(model)
+		end
+	end
+end
+
+for _, d in ipairs(workspace:GetDescendants()) do tryTrack(d) end
+workspace.DescendantAdded:Connect(tryTrack)
+
+-- 定期重新分類（JumpingJack 可能晚一點才出現）
+task.spawn(function()
+	while true do
+		for model, d in pairs(tracked) do
+			if not model:IsDescendantOf(workspace) or not d.hl.Parent then
+				removeESP(model)
+			else
+				local cat = classify(model)
+				local show = settings.Master and settings[cat]
+				d.hl.Enabled = show
+				d.bb.Enabled = show
+				if show then
+					local color = COLORS[cat]
+					d.hl.FillColor = color
+					d.hl.OutlineColor = color
+					d.label.TextColor3 = color
+					local hum = model:FindFirstChildOfClass("Humanoid")
+					local hp = hum and math.floor(hum.Health) or 0
+					d.label.Text = string.format("[%s] %s\nHP %d", LABELS[cat], model.Name, hp)
+				end
+			end
+		end
+		task.wait(0.3)
+	end
+end)
+
+------------------------------------------------------------
+-- UI
+------------------------------------------------------------
+local gui = Instance.new("ScreenGui")
+gui.Name = "ESP_UI"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(170, 170)
+frame.Position = UDim2.new(0, 20, 0.4, 0)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 28)
+title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+title.BorderSizePixel = 0
+title.Text = "ESP（拖曳移動）"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = frame
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+local function makeButton(text, y, key, color)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -16, 0, 28)
+	btn.Position = UDim2.new(0, 8, 0, y)
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.GothamMedium
+	btn.TextSize = 14
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Parent = frame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+	local function refresh()
+		local on = settings[key]
+		btn.Text = text .. "：" .. (on and "開" or "關")
+		btn.BackgroundColor3 = on and (color or Color3.fromRGB(60, 160, 90)) or Color3.fromRGB(80, 80, 80)
+	end
+	refresh()
+	btn.MouseButton1Click:Connect(function()
+		settings[key] = not settings[key]
+		refresh()
+	end)
+end
+
+makeButton("ESP 總開關", 36, "Master", Color3.fromRGB(60, 160, 90))
+makeButton("NPC", 70, "NPC", COLORS.NPC)
+makeButton("玩家", 104, "Player", COLORS.Player)
+makeButton("警長", 138, "Sheriff", COLORS.Sheriff)
+
+-- 拖曳
+local dragging, dragStart, startPos
+title.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)

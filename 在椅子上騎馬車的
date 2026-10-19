@@ -1,5 +1,9 @@
--- 放在 StarterPlayer > StarterPlayerScripts（LocalScript）
+-- 傳送選單 + 重新進入遊戲按鈕（重進後自動再執行這個腳本）
+-- 用執行器執行即可（需要 loadstring 與 queue_on_teleport）
+local SOURCE = [==[
+local SRC = ...
 local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
 local player = Players.LocalPlayer
 
 -- 7 個傳送點（X, Y, Z）
@@ -13,19 +17,25 @@ local locations = {
 	Vector3.new(259.62, 658.81, 956.98),
 }
 
--- 建立介面
+-- 避免重複建立介面
+local pg = player:WaitForChild("PlayerGui")
+local old = pg:FindFirstChild("TeleportGui")
+if old then old:Destroy() end
+
+local totalHeight = 40 + #locations * 38 + 42
+
 local gui = Instance.new("ScreenGui")
 gui.Name = "TeleportGui"
 gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+gui.Parent = pg
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 180, 0, 40 + #locations * 38)
-frame.Position = UDim2.new(0, 20, 0.5, -((40 + #locations * 38) / 2))
+frame.Size = UDim2.new(0, 180, 0, totalHeight)
+frame.Position = UDim2.new(0, 20, 0.5, -(totalHeight / 2))
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 frame.BorderSizePixel = 0
 frame.Active = true
-frame.Draggable = true -- 可拖曳
+frame.Draggable = true
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 
@@ -38,7 +48,6 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 18
 title.Parent = frame
 
--- 傳送函式
 local function teleportTo(pos)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -47,7 +56,6 @@ local function teleportTo(pos)
 	end
 end
 
--- 建立按鈕
 for i, pos in ipairs(locations) do
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1, -20, 0, 32)
@@ -60,8 +68,40 @@ for i, pos in ipairs(locations) do
 	btn.BorderSizePixel = 0
 	btn.Parent = frame
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
-
 	btn.MouseButton1Click:Connect(function()
 		teleportTo(pos)
 	end)
 end
+
+-- 底部：重新進入遊戲按鈕
+local rejoin = Instance.new("TextButton")
+rejoin.Size = UDim2.new(1, -20, 0, 32)
+rejoin.Position = UDim2.new(0, 10, 0, 40 + #locations * 38 + 4)
+rejoin.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+rejoin.TextColor3 = Color3.new(1, 1, 1)
+rejoin.Font = Enum.Font.GothamBold
+rejoin.TextSize = 16
+rejoin.Text = "重新進入遊戲"
+rejoin.BorderSizePixel = 0
+rejoin.Parent = frame
+Instance.new("UICorner", rejoin).CornerRadius = UDim.new(0, 8)
+
+rejoin.MouseButton1Click:Connect(function()
+	rejoin.Text = "重新進入中..."
+	-- 先排程：重進後自動再執行這個腳本
+	local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+	if q and SRC then
+		q("local s = [==[" .. SRC .. "]==] loadstring(s)(s)")
+	end
+	-- 再重新進入同一個遊戲
+	if #Players:GetPlayers() <= 1 then
+		player:Kick("\n重新進入中...")
+		task.wait()
+		TeleportService:Teleport(game.PlaceId, player)
+	else
+		TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+	end
+end)
+]==]
+
+loadstring(SOURCE)(SOURCE)

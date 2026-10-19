@@ -1,4 +1,4 @@
--- 放在 StarterPlayer > StarterPlayerScripts（LocalScript）
+-- 放在 StarterPlayer > StarterPlayerScripts（LocalScript)
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 

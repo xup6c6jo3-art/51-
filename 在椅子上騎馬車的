@@ -4,9 +4,9 @@ local player = Players.LocalPlayer
 
 -- 7 個傳送點（X, Y, Z）
 local locations = {
-	Vector3.new(-236.96, 564.34, 204.60),
+	Vector3.new(-236.96, 567.34, 204.60),
 	Vector3.new(-181.86, 562.56, 791.25),
-	Vector3.new(16.64, 869.74, 321.64),
+	Vector3.new(16.64, 872.74, 321.64),
 	Vector3.new(855.02, 889.05, 706.35),
 	Vector3.new(-897.30, 999.23, -58.17),
 	Vector3.new(-146.22, 999.17, 1308.14),

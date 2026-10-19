@@ -1,0 +1,67 @@
+-- 放在 StarterPlayer > StarterPlayerScripts（LocalScript）
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- 7 個傳送點（X, Y, Z）
+local locations = {
+	Vector3.new(-236.96, 567.34, 204.60),
+	Vector3.new(-181.86, 562.56, 791.25),
+	Vector3.new(16.64, 872.74, 321.64),
+	Vector3.new(855.02, 889.05, 706.35),
+	Vector3.new(-897.30, 999.23, -58.17),
+	Vector3.new(-146.22, 999.17, 1308.14),
+	Vector3.new(259.62, 658.81, 956.98),
+}
+
+-- 建立介面
+local gui = Instance.new("ScreenGui")
+gui.Name = "TeleportGui"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 180, 0, 40 + #locations * 38)
+frame.Position = UDim2.new(0, 20, 0.5, -((40 + #locations * 38) / 2))
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true -- 可拖曳
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundTransparency = 1
+title.Text = "傳送選單"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+title.Parent = frame
+
+-- 傳送函式
+local function teleportTo(pos)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.CFrame = CFrame.new(pos)
+	end
+end
+
+-- 建立按鈕
+for i, pos in ipairs(locations) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -20, 0, 32)
+	btn.Position = UDim2.new(0, 10, 0, 40 + (i - 1) * 38)
+	btn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.Gotham
+	btn.TextSize = 16
+	btn.Text = "傳送到第 " .. i .. " 個"
+	btn.BorderSizePixel = 0
+	btn.Parent = frame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+	btn.MouseButton1Click:Connect(function()
+		teleportTo(pos)
+	end)
+end

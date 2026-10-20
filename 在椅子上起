@@ -6,10 +6,10 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 -- ====== 設定 ======
-local FIRST = 0            -- 起始編號
-local LAST = 6             -- 結束編號（共 7 個檢查點：0~6）
-local DELAY = 0.1          -- 每個檢查點停留秒數
-local HEIGHT_OFFSET = 0    -- 傳送時比目標高多少 studs，避免卡進地板
+local FIRST = 0          -- 起始編號
+local LAST = 6           -- 結束編號（共 7 個檢查點：0~6）
+local DELAY = 0.1        -- 每個檢查點停留秒數
+local HEIGHT_OFFSET = 0  -- 傳送時比目標高多少 studs，避免卡進地板
 -- ==================
 
 -- 建立 UI
@@ -74,7 +74,7 @@ local function zeroVelocity(root)
 end
 
 -- 傳送到某個檢查點底下的 Closedoor（沒有 Closedoor 就不傳）
--- 如果玩家坐在載具上，就連載具一起傳
+-- 如果玩家坐在載具上，就連載具一起傳，並在傳送後隨機移動一下以觸發判定
 local function teleportTo(checker)
 	local char = player.Character
 	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -95,9 +95,19 @@ local function teleportTo(checker)
 	if vehicle then
 		vehicle:PivotTo(targetCF)
 		zeroVelocity(vehicle)
+		
+		-- 隨機位移或晃動一下來確實觸發判定
+		task.wait(0.03)
+		local randomOffset = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)) * 0.5
+		vehicle:PivotTo(targetCF + randomOffset)
 	else
 		char:PivotTo(targetCF)
 		zeroVelocity(char)
+		
+		-- 隨機位移或晃動一下來確實觸發判定
+		task.wait(0.03)
+		local randomOffset = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)) * 0.5
+		char:PivotTo(targetCF + randomOffset)
 	end
 	return true
 end

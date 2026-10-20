@@ -6,10 +6,10 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 -- ====== 設定 ======
-local FIRST = 0          -- 起始編號
-local LAST = 6           -- 結束編號（共 7 個檢查點：0~6）
-local DELAY = 0.1        -- 每個檢查點停留秒數
-local HEIGHT_OFFSET = 4  -- 傳送時比目標高多少 studs，避免卡進地板
+local FIRST = 0            -- 起始編號
+local LAST = 6             -- 結束編號（共 7 個檢查點：0~6）
+local DELAY = 0.1          -- 每個檢查點停留秒數
+local HEIGHT_OFFSET = 4    -- 傳送時比目標高多少 studs，避免卡進地板
 -- ==================
 
 -- 建立 UI
@@ -74,7 +74,7 @@ local function zeroVelocity(root)
 end
 
 -- 傳送到某個檢查點底下的 Closedoor（沒有 Closedoor 就不傳）
--- 如果玩家坐在載具上，就連載具一起傳，並在傳送後僅在 X 和 Z 軸進行大幅度隨機移動（保持 Y 高度不變）
+-- 如果玩家坐在載具上，就連載具一起傳
 local function teleportTo(checker)
 	local char = player.Character
 	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -95,21 +95,9 @@ local function teleportTo(checker)
 	if vehicle then
 		vehicle:PivotTo(targetCF)
 		zeroVelocity(vehicle)
-		
-		-- 僅改變 X 和 Z 軸的隨機範圍（±4 studs），Y 軸維持不變
-		task.wait(0.03)
-		local currentPos = vehicle:GetPivot().Position
-		local randomOffset = Vector3.new(math.random(-4, 4), 0, math.random(-4, 4))
-		vehicle:PivotTo(CFrame.new(currentPos + randomOffset) * select(2, vehicle:GetPivot():ToOrientation()))
 	else
 		char:PivotTo(targetCF)
 		zeroVelocity(char)
-		
-		-- 僅改變 X 和 Z 軸的隨機範圍（±4 studs），Y 軸維持不變
-		task.wait(0.03)
-		local currentPos = char:GetPivot().Position
-		local randomOffset = Vector3.new(math.random(-4, 4), 0, math.random(-4, 4))
-		char:PivotTo(CFrame.new(currentPos + randomOffset) * select(2, char:GetPivot():ToOrientation()))
 	end
 	return true
 end

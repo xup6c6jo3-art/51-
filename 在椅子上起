@@ -8,8 +8,8 @@ local player = Players.LocalPlayer
 -- ====== 設定 ======
 local FIRST = 1            -- 起始編號
 local LAST = 7             -- 結束編號
-local DELAY = 0.1          -- 每個檢查點停留秒數
-local HEIGHT_OFFSET = 4    -- 傳送時比目標高多少 studs，避免卡進地板
+local DELAY = 1          -- 每個檢查點停留秒數
+local HEIGHT_OFFSET = 0    -- 傳送時比目標高多少 studs，避免卡進地板
 -- ==================
 
 -- 建立 UI
@@ -73,7 +73,7 @@ local function zeroVelocity(root)
 	end
 end
 
--- 傳送到某個檢查點底下的 Closedoor（找不到就退而求其次用 HitBox，再不行用整個模型）
+-- 傳送到某個檢查點底下的 Closedoor（沒有 Closedoor 就不傳）
 -- 如果玩家坐在載具上，就連載具一起傳
 local function teleportTo(checker)
 	local char = player.Character
@@ -83,7 +83,12 @@ local function teleportTo(checker)
 		return false
 	end
 
-	local target = checker:FindFirstChild("Closedoor") or checker:FindFirstChild("HitBox") or checker
+	-- 一定要用 Closedoor，找不到就不傳（避免傳到錯的位置導致無法判定）
+	local target = checker:FindFirstChild("Closedoor")
+	if not target then
+		warn(checker:GetFullName() .. " 底下找不到 Closedoor，已跳過")
+		return false
+	end
 	local targetCF = target:GetPivot() + Vector3.new(0, HEIGHT_OFFSET, 0)
 
 	local vehicle = getVehicle(humanoid)

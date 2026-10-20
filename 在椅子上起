@@ -8,8 +8,8 @@ local player = Players.LocalPlayer
 -- ====== 設定 ======
 local FIRST = 0            -- 起始編號
 local LAST = 6             -- 結束編號（共 7 個檢查點：0~6）
-local DELAY = 0.1          -- 每個檢查點停留秒數
-local HEIGHT_OFFSET = 4    -- 傳送時比目標高多少 studs，避免卡進地板
+local DELAY = 0.5          -- 每個檢查點停留秒數
+local HEIGHT_OFFSET = 0    -- 傳送時比目標高多少 studs，避免卡進地板
 -- ==================
 
 -- 建立 UI

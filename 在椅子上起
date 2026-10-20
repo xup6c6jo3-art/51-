@@ -1,67 +1,141 @@
--- 放在 StarterPlayer > StarterPlayerScripts（LocalScript）
+-- LocalScript
+-- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
+-- 按「開啟」後，依序傳送到 CartChecker 的 Point = 1 ~ 7，每個停 0.1 秒
+
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
--- 7 個傳送點（X, Y, Z）
-local locations = {
-	Vector3.new(-236.96, 567.34, 204.60),
-	Vector3.new(-181.86, 562.56, 791.25),
-	Vector3.new(16.64, 872.74, 321.64),
-	Vector3.new(855.02, 889.05, 706.35),
-	Vector3.new(-897.30, 999.23, -58.17),
-	Vector3.new(-146.22, 999.17, 1308.14),
-	Vector3.new(259.62, 658.81, 956.98),
-}
+-- ====== 設定 ======
+local FIRST = 1            -- 起始編號
+local LAST = 7             -- 結束編號
+local DELAY = 0.1          -- 每個檢查點停留秒數
+local HEIGHT_OFFSET = 4    -- 傳送時比目標高多少 studs，避免卡進地板
+-- ==================
 
--- 建立介面
+-- 建立 UI
 local gui = Instance.new("ScreenGui")
-gui.Name = "TeleportGui"
+gui.Name = "CartTeleportUI"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 180, 0, 40 + #locations * 38)
-frame.Position = UDim2.new(0, 20, 0.5, -((40 + #locations * 38) / 2))
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true -- 可拖曳
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+local button = Instance.new("TextButton")
+button.Size = UDim2.fromOffset(160, 50)
+button.Position = UDim2.new(0, 20, 0.5, -25)
+button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+button.TextColor3 = Color3.new(1, 1, 1)
+button.Font = Enum.Font.SourceSansBold
+button.TextSize = 24
+button.Text = "開啟"
+button.Parent = gui
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 36)
-title.BackgroundTransparency = 1
-title.Text = "傳送選單"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 18
-title.Parent = frame
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = button
 
--- 傳送函式
-local function teleportTo(pos)
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if hrp then
-		hrp.CFrame = CFrame.new(pos)
+-- 找出所有 CartChecker，用 Point.Value 當編號
+local function collectCheckers()
+	local list = {}
+	for _, inst in ipairs(workspace:GetDescendants()) do
+		if inst.Name == "CartChecker" and inst:IsA("Model") then
+			local point = inst:FindFirstChild("Point")
+			if point and point:IsA("NumberValue") then
+				list[point.Value] = inst
+			end
+		end
+	end
+	return list
+end
+
+-- 找出玩家坐著的載具（workspace 底下最外層的 Model），沒坐著就回傳 nil
+local function getVehicle(humanoid)
+	local seat = humanoid and humanoid.SeatPart
+	if not seat then
+		return nil
+	end
+
+	local top = seat:FindFirstAncestorOfClass("Model")
+	while top and top.Parent and top.Parent ~= workspace and top.Parent:IsA("Model") do
+		top = top.Parent
+	end
+	return top
+end
+
+local function zeroVelocity(root)
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.AssemblyLinearVelocity = Vector3.zero
+			d.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+	if root:IsA("BasePart") then
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
 	end
 end
 
--- 建立按鈕
-for i, pos in ipairs(locations) do
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -20, 0, 32)
-	btn.Position = UDim2.new(0, 10, 0, 40 + (i - 1) * 38)
-	btn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.Font = Enum.Font.Gotham
-	btn.TextSize = 16
-	btn.Text = "傳送到第 " .. i .. " 個"
-	btn.BorderSizePixel = 0
-	btn.Parent = frame
-	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+-- 傳送到某個檢查點底下的 Closedoor（找不到就退而求其次用 HitBox，再不行用整個模型）
+-- 如果玩家坐在載具上，就連載具一起傳
+local function teleportTo(checker)
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
 
-	btn.MouseButton1Click:Connect(function()
-		teleportTo(pos)
-	end)
+	local target = checker:FindFirstChild("Closedoor") or checker:FindFirstChild("HitBox") or checker
+	local targetCF = target:GetPivot() + Vector3.new(0, HEIGHT_OFFSET, 0)
+
+	local vehicle = getVehicle(humanoid)
+	if vehicle then
+		vehicle:PivotTo(targetCF)
+		zeroVelocity(vehicle)
+	else
+		char:PivotTo(targetCF)
+		zeroVelocity(char)
+	end
+	return true
 end
+
+local running = false
+local runId = 0
+
+button.MouseButton1Click:Connect(function()
+	-- 執行中再按一次 = 停止
+	if running then
+		running = false
+		runId += 1
+		button.Text = "開啟"
+		button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+		return
+	end
+
+	running = true
+	runId += 1
+	local myId = runId
+	button.Text = "停止"
+	button.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+
+	local checkers = collectCheckers()
+
+	for n = FIRST, LAST do
+		if myId ~= runId then
+			return -- 被中途停止或重新開始
+		end
+
+		local checker = checkers[n]
+		if checker then
+			teleportTo(checker)
+		else
+			warn("找不到 Point = " .. n .. " 的 CartChecker")
+		end
+
+		task.wait(DELAY)
+	end
+
+	if myId == runId then
+		running = false
+		button.Text = "開啟"
+		button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+	end
+end)

@@ -1,14 +1,14 @@
 -- LocalScript
 -- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
--- 按「開啟」後，依序傳送到 CartChecker 的 Point = 1 ~ 7，每個停 0.1 秒
+-- 按「開啟」後，依序傳送到 CartChecker 的 Point = 0 ~ 6，每個停 0.1 秒
 
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 -- ====== 設定 ======
-local FIRST = 1            -- 起始編號
-local LAST = 7             -- 結束編號
-local DELAY = 1          -- 每個檢查點停留秒數
+local FIRST = 0            -- 起始編號
+local LAST = 6             -- 結束編號（共 7 個檢查點：0~6）
+local DELAY = 0.1          -- 每個檢查點停留秒數
 local HEIGHT_OFFSET = 0    -- 傳送時比目標高多少 studs，避免卡進地板
 -- ==================
 

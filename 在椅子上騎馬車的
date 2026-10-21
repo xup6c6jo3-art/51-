@@ -174,7 +174,7 @@ local function run()
 	local spawnPos = getSpawnPos(prompt)
 	local newSeats = {}
 	local conn = workspace.DescendantAdded:Connect(function(d)
-		if d:IsA("Seat") then
+		if d:IsA("Seat") or d:IsA("VehicleSeat") then
 			table.insert(newSeats, d)
 		end
 	end)
@@ -224,7 +224,7 @@ local function run()
 	if not seat then
 		local bestDist
 		for _, d in ipairs(workspace:GetDescendants()) do
-			if d:IsA("Seat") and not d.Occupant then
+			if (d:IsA("Seat") or d:IsA("VehicleSeat")) and not d.Occupant then
 				local dd = (d.Position - spawnPos).Magnitude
 				if dd < 30 and (not bestDist or dd < bestDist) then
 					seat, bestDist = d, dd

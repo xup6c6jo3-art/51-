@@ -1,67 +1,262 @@
--- 放在 StarterPlayer > StarterPlayerScripts（LocalScript)
+-- LocalScript：自動生成車子並坐上去
+-- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
+--
+-- 流程：
+-- 1. 找最近的 spawner（sign 上 ActionText = "open spawn menu" 的 ProximityPrompt）
+-- 2. 太遠就先傳到它旁邊
+-- 3. 觸發 prompt（伺服器因此記住你在哪個 spawner）
+-- 4. 呼叫 GetInventory，再送 SpawnCarts
+-- 5. 偵測新出現的座位，把角色放上去，直到真的坐上為止
+
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
--- 7 個傳送點（X, Y, Z）
-local locations = {
-    Vector3.new(-236.96, 569.34, 204.60),
-    Vector3.new(-181.86, 562.56, 791.25),
-    Vector3.new(16.64, 875.74, 321.64),
-    Vector3.new(855.02, 889.05, 706.35),
-    Vector3.new(-897.30, 999.23, -58.17),
-    Vector3.new(-146.22, 999.17, 1308.14),
-    Vector3.new(259.62, 658.81, 956.98),
-}
+-- ====== 設定 ======
+local CART_NAME = "Regular Cart"
+local PROMPT_TEXT = "open spawn menu"   -- 要找的 ProximityPrompt 的 ActionText
+local TELEPORT_IF_FAR = 8               -- 離 spawner 超過這個距離就先傳過去
+local WAIT_AFTER_PROMPT = 0.4           -- 觸發 prompt 後，等伺服器記住 spawner 的秒數
+local WAIT_FOR_CART = 5                 -- 送出 SpawnCarts 後，最多等幾秒看車子出現
+local SIT_ATTEMPTS = 8                  -- 嘗試坐上去的次數
+local SEAT_HEIGHT = 2                   -- 角色放在座位上方幾 studs（會掉下去碰到座位）
+-- ==================
 
--- 建立介面
+-- UI
 local gui = Instance.new("ScreenGui")
-gui.Name = "TeleportGui"
+gui.Name = "CartAutoSpawnSitUI"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 180, 0, 40 + #locations * 38)
-frame.Position = UDim2.new(0, 20, 0.5, -((40 + #locations * 38) / 2))
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true -- 可拖曳
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+local button = Instance.new("TextButton")
+button.Size = UDim2.fromOffset(160, 50)
+button.Position = UDim2.new(0, 20, 0.5, 95)
+button.BackgroundColor3 = Color3.fromRGB(150, 90, 200)
+button.TextColor3 = Color3.new(1, 1, 1)
+button.Font = Enum.Font.SourceSansBold
+button.TextSize = 22
+button.Text = "生成+坐上"
+button.Parent = gui
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 36)
-title.BackgroundTransparency = 1
-title.Text = "傳送選單"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 18
-title.Parent = frame
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = button
 
--- 傳送函式
-local function teleportTo(pos)
-    local char = player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(pos)
-    end
+local function setText(t)
+	button.Text = t
 end
 
--- 建立按鈕
-for i, pos in ipairs(locations) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 32)
-    btn.Position = UDim2.new(0, 10, 0, 40 + (i - 1) * 38)
-    btn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
-    btn.TextColor3 = Color3.new(1, 1, 1)
-    btn.Font = Enum.Font.Gotham
-    btn.TextSize = 16
-    btn.Text = "傳送到第 " .. i .. " 個"
-    btn.BorderSizePixel = 0
-    btn.Parent = frame
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
-
-    btn.MouseButton1Click:Connect(function()
-        teleportTo(pos)
-    end)
+local function getChar()
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	return char, humanoid, root
 end
+
+local function zeroVelocity(root)
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+end
+
+-- 找最近的 spawner prompt
+local function findNearestPrompt()
+	local _, _, root = getChar()
+	if not root then
+		return nil
+	end
+	local best, bestDist
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("ProximityPrompt") and d.ActionText == PROMPT_TEXT and d.Parent:IsA("BasePart") then
+			local dist = (d.Parent.Position - root.Position).Magnitude
+			if not bestDist or dist < bestDist then
+				best, bestDist = d, dist
+			end
+		end
+	end
+	return best, bestDist
+end
+
+-- 取得 spawner 的 SpawnArea（車子生成的位置），找不到就用 sign 的位置
+local function getSpawnPos(prompt)
+	local sign = prompt.Parent
+	local model = sign:FindFirstAncestorOfClass("Model")
+	local area = model and model:FindFirstChild("SpawnArea", true)
+	if area and area:IsA("BasePart") then
+		return area.Position
+	end
+	return sign.Position
+end
+
+-- 傳到 sign 旁邊（站在 sign 外側，不要站在車子生成的位置上）
+local function goNearSpawner(prompt)
+	local _, _, root = getChar()
+	if not root then
+		return false
+	end
+	local signPos = prompt.Parent.Position
+	local spawnPos = getSpawnPos(prompt)
+	local away = Vector3.new(signPos.X - spawnPos.X, 0, signPos.Z - spawnPos.Z)
+	if away.Magnitude < 0.1 then
+		away = Vector3.new(1, 0, 0)
+	end
+	local standPos = signPos + away.Unit * 2 + Vector3.new(0, 3, 0)
+	root.CFrame = CFrame.new(standPos)
+	zeroVelocity(root)
+	task.wait(0.15)
+	return true
+end
+
+-- 觸發 prompt
+local function triggerPrompt(prompt)
+	if fireproximityprompt then
+		fireproximityprompt(prompt)
+	else
+		prompt:InputHoldBegin()
+		task.wait(math.max(prompt.HoldDuration, 0) + 0.05)
+		prompt:InputHoldEnd()
+	end
+end
+
+local function sitOn(seat)
+	for attempt = 1, SIT_ATTEMPTS do
+		local _, humanoid, root = getChar()
+		if not root or not humanoid then
+			return false
+		end
+		if humanoid.SeatPart then
+			return true
+		end
+		if not seat.Parent then
+			return false
+		end
+
+		root.CFrame = seat.CFrame * CFrame.new(0, seat.Size.Y / 2 + SEAT_HEIGHT, 0)
+		zeroVelocity(root)
+
+		if firetouchinterest then
+			firetouchinterest(root, seat, 0)
+			task.wait()
+			firetouchinterest(root, seat, 1)
+		end
+		task.wait(0.4)
+	end
+	local _, humanoid = getChar()
+	return humanoid and humanoid.SeatPart ~= nil
+end
+
+local busy = false
+
+local function run()
+	local _, humanoid, root = getChar()
+	if not root or not humanoid then
+		warn("[CartAutoSpawnSit] 找不到角色")
+		return
+	end
+	if humanoid.SeatPart then
+		warn("[CartAutoSpawnSit] 你已經坐在載具上了，請先下車")
+		return
+	end
+
+	-- 1. 找 spawner
+	local prompt, dist = findNearestPrompt()
+	if not prompt then
+		warn("[CartAutoSpawnSit] 找不到 ActionText = '" .. PROMPT_TEXT .. "' 的 ProximityPrompt（可能還沒載入，走近一點再試）")
+		return
+	end
+	print("[CartAutoSpawnSit] 最近的 spawner：", prompt.Parent:GetFullName(), "距離", math.floor(dist))
+
+	-- 2. 太遠就傳過去
+	if dist > TELEPORT_IF_FAR then
+		goNearSpawner(prompt)
+	end
+
+	-- 3. 準備偵測新出現的座位（要在送出 SpawnCarts 之前先連好）
+	local spawnPos = getSpawnPos(prompt)
+	local newSeats = {}
+	local conn = workspace.DescendantAdded:Connect(function(d)
+		if d:IsA("Seat") then
+			table.insert(newSeats, d)
+		end
+	end)
+
+	-- 4. 開菜單 → 送出 SpawnCarts
+	triggerPrompt(prompt)
+	task.wait(WAIT_AFTER_PROMPT)
+
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+	local getInventory = remotes and remotes:FindFirstChild("GetInventory")
+	local spawnCarts = remotes and remotes:FindFirstChild("SpawnCarts")
+	if not spawnCarts then
+		conn:Disconnect()
+		warn("[CartAutoSpawnSit] 找不到 ReplicatedStorage.Remotes.SpawnCarts")
+		return
+	end
+
+	if getInventory then
+		pcall(function()
+			getInventory:InvokeServer()
+		end)
+	end
+	spawnCarts:FireServer(CART_NAME)
+	print("[CartAutoSpawnSit] 已送出 SpawnCarts：", CART_NAME)
+
+	-- 5. 等車子出現
+	local seat
+	local t0 = os.clock()
+	while os.clock() - t0 < WAIT_FOR_CART do
+		local bestDist
+		for _, s in ipairs(newSeats) do
+			if s.Parent and not s.Occupant then
+				local d = (s.Position - spawnPos).Magnitude
+				if not bestDist or d < bestDist then
+					seat, bestDist = s, d
+				end
+			end
+		end
+		if seat then
+			break
+		end
+		task.wait(0.1)
+	end
+	conn:Disconnect()
+
+	-- 備案：沒偵測到新座位，就找 spawner 附近沒人坐的座位
+	if not seat then
+		local bestDist
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d:IsA("Seat") and not d.Occupant then
+				local dd = (d.Position - spawnPos).Magnitude
+				if dd < 30 and (not bestDist or dd < bestDist) then
+					seat, bestDist = d, dd
+				end
+			end
+		end
+		if seat then
+			print("[CartAutoSpawnSit] 沒偵測到新座位，改用附近的座位：", seat:GetFullName())
+		end
+	end
+
+	if not seat then
+		warn("[CartAutoSpawnSit] 沒有找到車子的座位（Seat / VehicleSeat）。把生成後車子在 Explorer 裡的結構貼給我")
+		return
+	end
+	print("[CartAutoSpawnSit] 找到座位：", seat:GetFullName(), seat.ClassName)
+
+	-- 6. 坐上去
+	local ok = sitOn(seat)
+	print("[CartAutoSpawnSit] 坐上去：", ok and "成功" or "失敗")
+end
+
+button.MouseButton1Click:Connect(function()
+	if busy then
+		return
+	end
+	busy = true
+	setText("執行中...")
+	local ok, err = pcall(run)
+	if not ok then
+		warn("[CartAutoSpawnSit] 錯誤：", err)
+	end
+	setText("生成+坐上")
+	busy = false
+end)

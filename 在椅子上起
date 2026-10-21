@@ -1,44 +1,328 @@
--- LocalScript（測試用：傳送過去 + 用 firetouchinterest 送出「碰到了」）
--- 需要執行器支援 firetouchinterest，一般 Studio 的 LocalScript 沒有這個函式
--- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
+-- 全自動（合併版）：生成車子 → 坐上 → 依序走完檢查點 0~6 → 重進遊戲 → 重複
+-- 單一按鈕：按一次開始，再按一次停止
+--
+-- 重進後要自動繼續：請把這支腳本放進執行器的 autoexec 資料夾
+-- （腳本會用一個旗標檔記住「自動化還開著」，重進後看到旗標就自動開始）
+-- 沒有 autoexec 的話，重進後手動執行一次即可，它會自動接著跑
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
 local player = Players.LocalPlayer
 
 -- ====== 設定 ======
+-- 生成車子
+local CART_NAME = "Regular Cart"
+local PROMPT_TEXT = "open spawn menu"
+local TELEPORT_IF_FAR = 8
+local WAIT_AFTER_PROMPT = 0.4
+local WAIT_FOR_CART = 5
+local SIT_ATTEMPTS = 8
+local SEAT_HEIGHT = 2
+local SPAWN_RETRIES = 2          -- 生成+坐上失敗時重試次數，都失敗就停止自動化
+
+-- 檢查點
 local FIRST = 0
 local LAST = 6
-local DELAY = 0.5           -- 每個檢查點之間的秒數
-local HEIGHT_OFFSET = 0     -- 傳送時比門高多少 studs
-local TOUCH_DOOR = true     -- 對 Closedoor 送碰到
-local TOUCH_HITBOX = true   -- 對 HitBox 也送碰到（不確定伺服器看哪個，兩個都送）
-local TOUCH_WAIT = 0.05     -- 開始碰到 → 結束碰到 之間的秒數
+local DELAY = 0.3                -- 每個檢查點之間的秒數
+local HEIGHT_OFFSET = 0
+local APPROACH_PAD = 4
+local STEP = 4
+local STEP_WAIT = 0.03
+local FIRST_WAIT = 0.1
+local HOLD_AT_DOOR = 0.1
+local OVERSHOOT = 3
+local REVERSE = false            -- 穿門方向反了就改 true
+local USE_FIRETOUCH = true       -- 走到門中間時，也用 firetouchinterest 送碰到（執行器沒有的話自動略過）
+local TOUCH_WAIT = 0.05
+
+-- 重進
+local AUTO_REJOIN = true         -- 走完檢查點後自動重進
+local FINISH_WAIT = 1.5          -- 走完最後一個檢查點後，等幾秒再重進（讓伺服器結算）
+local REJOIN_SAME_SERVER = false -- true = 回同一個伺服器；false = 隨機進新的伺服器
+local AUTO_START_DELAY = 3       -- 重進後，旗標存在時等幾秒自動開始
+local FLAG_FILE = "CartAutoAll_running.flag"
 -- ==================
 
-if not firetouchinterest then
-	warn("[CartTouchTest] 這個環境沒有 firetouchinterest，只會傳送，不會送碰到")
+-- 執行器函式（沒有就是 nil）
+local _fireprox = fireproximityprompt
+local _firetouch = firetouchinterest
+local _writefile, _isfile, _delfile = writefile, isfile, delfile
+
+-- ========== UI ==========
+local old = player:WaitForChild("PlayerGui"):FindFirstChild("CartAutoAllUI")
+if old then
+	old:Destroy()
 end
 
--- UI
 local gui = Instance.new("ScreenGui")
-gui.Name = "CartTouchTestUI"
+gui.Name = "CartAutoAllUI"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local button = Instance.new("TextButton")
-button.Size = UDim2.fromOffset(160, 50)
-button.Position = UDim2.new(0, 20, 0.5, 35)
-button.BackgroundColor3 = Color3.fromRGB(46, 120, 200)
+button.Size = UDim2.fromOffset(180, 50)
+button.Position = UDim2.new(0, 20, 0.5, -25)
+button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
 button.TextColor3 = Color3.new(1, 1, 1)
 button.Font = Enum.Font.SourceSansBold
 button.TextSize = 22
-button.Text = "傳送+碰到"
+button.Text = "全自動：開始"
 button.Parent = gui
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = button
 
+local function setStatus(t)
+	button.Text = t
+end
+
+-- ========== 旗標檔（記住自動化是否開著）==========
+local function flagOn()
+	return _isfile ~= nil and _isfile(FLAG_FILE)
+end
+
+local function setFlag(on)
+	if on then
+		if _writefile then
+			pcall(_writefile, FLAG_FILE, "1")
+		end
+	else
+		if _delfile and _isfile and _isfile(FLAG_FILE) then
+			pcall(_delfile, FLAG_FILE)
+		end
+	end
+end
+
+-- ========== 共用 ==========
+local function getChar()
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	return char, humanoid, root
+end
+
+local function zeroVelocity(root)
+	if root:IsA("BasePart") then
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+	end
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.AssemblyLinearVelocity = Vector3.zero
+			d.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
+end
+
+local function isSeat(d)
+	return d:IsA("Seat") or d:IsA("VehicleSeat")
+end
+
+local function getCFrame(obj)
+	if obj:IsA("BasePart") then
+		return obj.CFrame
+	elseif obj:IsA("Model") then
+		return obj:GetPivot()
+	end
+	local part = obj:FindFirstChildWhichIsA("BasePart", true)
+	return part and part.CFrame or nil
+end
+
+local function halfExtentAlong(part, dir)
+	local cf, s = part.CFrame, part.Size
+	return math.abs(dir:Dot(cf.RightVector)) * s.X / 2
+		+ math.abs(dir:Dot(cf.UpVector)) * s.Y / 2
+		+ math.abs(dir:Dot(cf.LookVector)) * s.Z / 2
+end
+
+local function getVehicle(humanoid)
+	local seat = humanoid and humanoid.SeatPart
+	if not seat then
+		return nil
+	end
+	local top = seat:FindFirstAncestorOfClass("Model")
+	while top and top.Parent and top.Parent ~= workspace and top.Parent:IsA("Model") do
+		top = top.Parent
+	end
+	return top
+end
+
+-- ========== 第 1 段：生成車子並坐上 ==========
+local function findNearestPrompt()
+	local _, _, root = getChar()
+	if not root then
+		return nil
+	end
+	local best, bestDist
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("ProximityPrompt") and d.ActionText == PROMPT_TEXT and d.Parent:IsA("BasePart") then
+			local dist = (d.Parent.Position - root.Position).Magnitude
+			if not bestDist or dist < bestDist then
+				best, bestDist = d, dist
+			end
+		end
+	end
+	return best, bestDist
+end
+
+local function getSpawnPos(prompt)
+	local sign = prompt.Parent
+	local model = sign:FindFirstAncestorOfClass("Model")
+	local area = model and model:FindFirstChild("SpawnArea", true)
+	if area and area:IsA("BasePart") then
+		return area.Position
+	end
+	return sign.Position
+end
+
+local function goNearSpawner(prompt)
+	local _, _, root = getChar()
+	if not root then
+		return
+	end
+	local signPos = prompt.Parent.Position
+	local spawnPos = getSpawnPos(prompt)
+	local away = Vector3.new(signPos.X - spawnPos.X, 0, signPos.Z - spawnPos.Z)
+	if away.Magnitude < 0.1 then
+		away = Vector3.new(1, 0, 0)
+	end
+	root.CFrame = CFrame.new(signPos + away.Unit * 2 + Vector3.new(0, 3, 0))
+	zeroVelocity(root)
+	task.wait(0.15)
+end
+
+local function triggerPrompt(prompt)
+	if _fireprox then
+		_fireprox(prompt)
+	else
+		prompt:InputHoldBegin()
+		task.wait(math.max(prompt.HoldDuration, 0) + 0.05)
+		prompt:InputHoldEnd()
+	end
+end
+
+local function sitOn(seat, stillValid)
+	for _ = 1, SIT_ATTEMPTS do
+		if not stillValid() then
+			return false
+		end
+		local _, humanoid, root = getChar()
+		if not root or not humanoid then
+			return false
+		end
+		if humanoid.SeatPart then
+			return true
+		end
+		if not seat.Parent then
+			return false
+		end
+
+		root.CFrame = seat.CFrame * CFrame.new(0, seat.Size.Y / 2 + SEAT_HEIGHT, 0)
+		zeroVelocity(root)
+
+		if _firetouch then
+			_firetouch(root, seat, 0)
+			task.wait()
+			_firetouch(root, seat, 1)
+		end
+		task.wait(0.4)
+	end
+	local _, humanoid = getChar()
+	return humanoid ~= nil and humanoid.SeatPart ~= nil
+end
+
+-- 回傳 true = 已經坐在車上
+local function spawnAndSit(stillValid)
+	local _, humanoid, root = getChar()
+	if not root or not humanoid then
+		warn("[CartAuto] 找不到角色")
+		return false
+	end
+	if humanoid.SeatPart then
+		print("[CartAuto] 已經坐在載具上，略過生成")
+		return true
+	end
+
+	local prompt, dist = findNearestPrompt()
+	if not prompt then
+		warn("[CartAuto] 找不到 '" .. PROMPT_TEXT .. "' 的 ProximityPrompt")
+		return false
+	end
+	if dist > TELEPORT_IF_FAR then
+		goNearSpawner(prompt)
+	end
+
+	local spawnPos = getSpawnPos(prompt)
+	local newSeats = {}
+	local conn = workspace.DescendantAdded:Connect(function(d)
+		if isSeat(d) then
+			table.insert(newSeats, d)
+		end
+	end)
+
+	triggerPrompt(prompt)
+	task.wait(WAIT_AFTER_PROMPT)
+
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+	local getInventory = remotes and remotes:FindFirstChild("GetInventory")
+	local spawnCarts = remotes and remotes:FindFirstChild("SpawnCarts")
+	if not spawnCarts then
+		conn:Disconnect()
+		warn("[CartAuto] 找不到 Remotes.SpawnCarts")
+		return false
+	end
+	if getInventory then
+		pcall(function()
+			getInventory:InvokeServer()
+		end)
+	end
+	spawnCarts:FireServer(CART_NAME)
+
+	local seat
+	local t0 = os.clock()
+	while os.clock() - t0 < WAIT_FOR_CART and stillValid() do
+		local bestDist
+		for _, s in ipairs(newSeats) do
+			if s.Parent and not s.Occupant then
+				local d = (s.Position - spawnPos).Magnitude
+				if not bestDist or d < bestDist then
+					seat, bestDist = s, d
+				end
+			end
+		end
+		if seat then
+			break
+		end
+		task.wait(0.1)
+	end
+	conn:Disconnect()
+
+	if not seat then
+		local bestDist
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if isSeat(d) and not d.Occupant then
+				local dd = (d.Position - spawnPos).Magnitude
+				if dd < 30 and (not bestDist or dd < bestDist) then
+					seat, bestDist = d, dd
+				end
+			end
+		end
+	end
+	if not seat then
+		warn("[CartAuto] 沒找到車子的座位")
+		return false
+	end
+
+	return sitOn(seat, stillValid)
+end
+
+-- ========== 第 2 段：檢查點 ==========
 local function readPoint(checker)
 	local p = checker:FindFirstChild("Point")
 	if p and p:IsA("ValueBase") and type(p.Value) == "number" then
@@ -60,72 +344,66 @@ local function collectCheckers()
 	return list
 end
 
-local function getCFrame(obj)
-	if obj:IsA("BasePart") then
-		return obj.CFrame
-	elseif obj:IsA("Model") then
-		return obj:GetPivot()
+local function moveTo(cf)
+	local char, humanoid, root = getChar()
+	if not root then
+		return false
 	end
-	local part = obj:FindFirstChildWhichIsA("BasePart", true)
-	return part and part.CFrame or nil
+	local vehicle = getVehicle(humanoid)
+	if vehicle then
+		vehicle:PivotTo(cf)
+		zeroVelocity(vehicle)
+	else
+		char:PivotTo(cf)
+		zeroVelocity(char)
+	end
+	return true
 end
 
-local function getVehicle(humanoid)
-	local seat = humanoid and humanoid.SeatPart
-	if not seat then
-		return nil
-	end
-	local top = seat:FindFirstAncestorOfClass("Model")
-	while top and top.Parent and top.Parent ~= workspace and top.Parent:IsA("Model") do
-		top = top.Parent
-	end
-	return top
-end
-
-local function zeroVelocity(root)
-	for _, d in ipairs(root:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.AssemblyLinearVelocity = Vector3.zero
-			d.AssemblyAngularVelocity = Vector3.zero
-		end
-	end
-	if root:IsA("BasePart") then
-		root.AssemblyLinearVelocity = Vector3.zero
-		root.AssemblyAngularVelocity = Vector3.zero
-	end
-end
-
--- 對 target 送出碰到：角色的 HumanoidRootPart 和座位（載具）都送
 local function touch(target)
-	if not firetouchinterest or not target or not target:IsA("BasePart") then
+	if not USE_FIRETOUCH or not _firetouch or not target or not target:IsA("BasePart") then
 		return
 	end
-	local char = player.Character
-	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local _, humanoid, root = getChar()
 	local seat = humanoid and humanoid.SeatPart
-
 	for _, mine in ipairs({ root, seat }) do
 		if mine then
-			firetouchinterest(mine, target, 0) -- 開始碰到
+			_firetouch(mine, target, 0)
 		end
 	end
 	task.wait(TOUCH_WAIT)
 	for _, mine in ipairs({ root, seat }) do
 		if mine then
-			firetouchinterest(mine, target, 1) -- 結束碰到
+			_firetouch(mine, target, 1)
 		end
 	end
 end
 
-local function teleportAndTouch(checker)
-	local char = player.Character
-	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not root then
-		return false
+local function buildDistances(door, doorCF, axis, hitbox)
+	local doorHalf = door:IsA("BasePart") and halfExtentAlong(door, axis) or 3
+	local startDist
+	if hitbox and hitbox:IsA("BasePart") then
+		local along = math.abs((hitbox.Position - doorCF.Position):Dot(axis))
+		startDist = along + halfExtentAlong(hitbox, axis) + APPROACH_PAD
+	else
+		startDist = doorHalf + 30
 	end
 
+	local endDist = -(doorHalf + OVERSHOOT)
+	local ds = {}
+	local d = startDist
+	while d > endDist do
+		if d < 0 and #ds > 0 and ds[#ds] > 0 then
+			table.insert(ds, 0)
+		end
+		table.insert(ds, d)
+		d -= STEP
+	end
+	table.insert(ds, endDist)
+	return ds
+end
+
+local function passThroughDoor(checker, stillValid)
 	local door = checker:FindFirstChild("Closedoor", true)
 	if not door then
 		warn(checker:GetFullName() .. " 底下找不到 Closedoor，已跳過")
@@ -135,69 +413,174 @@ local function teleportAndTouch(checker)
 	if not doorCF then
 		return false
 	end
-	local targetCF = doorCF + Vector3.new(0, HEIGHT_OFFSET, 0)
+	local hitbox = checker:FindFirstChild("HitBox", true)
 
-	local vehicle = getVehicle(humanoid)
-	if vehicle then
-		vehicle:PivotTo(targetCF)
-		zeroVelocity(vehicle)
-	else
-		char:PivotTo(targetCF)
-		zeroVelocity(char)
+	local axis = doorCF.LookVector
+	local sign = 1
+	if hitbox and hitbox:IsA("BasePart") then
+		sign = ((hitbox.Position - doorCF.Position):Dot(axis) >= 0) and 1 or -1
 	end
-
-	task.wait(0.05) -- 讓位置先同步一下再送碰到
-
-	if TOUCH_DOOR then
-		touch(door)
+	if REVERSE then
+		sign = -sign
 	end
-	if TOUCH_HITBOX then
-		touch(checker:FindFirstChild("HitBox", true))
+	local dir = axis * sign
+
+	local ds = buildDistances(door, doorCF, axis, hitbox)
+	local rotation = doorCF.Rotation
+	local doorPos = doorCF.Position + Vector3.new(0, HEIGHT_OFFSET, 0)
+
+	for i, dist in ipairs(ds) do
+		if not stillValid() then
+			return false
+		end
+		if not moveTo(rotation + (doorPos + dir * dist)) then
+			return false
+		end
+
+		if i == 1 then
+			task.wait(FIRST_WAIT)
+		elseif dist == 0 then
+			touch(door)
+			touch(hitbox)
+			task.wait(HOLD_AT_DOOR)
+		else
+			task.wait(STEP_WAIT)
+		end
 	end
 	return true
 end
 
+-- ========== 第 3 段：重進 ==========
+local function doRejoin()
+	setStatus("重進中...")
+	local ok, err = pcall(function()
+		if REJOIN_SAME_SERVER then
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
+		else
+			TeleportService:Teleport(game.PlaceId, player)
+		end
+	end)
+	if not ok then
+		warn("[CartAuto] 重進失敗：", err)
+	end
+end
+
+-- ========== 主流程 ==========
 local running = false
 local runId = 0
 
-local function setIdle()
+local function setIdle(text)
 	running = false
-	button.Text = "傳送+碰到"
-	button.BackgroundColor3 = Color3.fromRGB(46, 120, 200)
+	button.Text = text or "全自動：開始"
+	button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+end
+
+local function stopAll(reason)
+	runId += 1
+	setFlag(false)
+	setIdle()
+	if reason then
+		warn("[CartAuto] 已停止：" .. reason)
+	end
+end
+
+local function startAll()
+	if running then
+		return
+	end
+	running = true
+	runId += 1
+	local myId = runId
+	local function stillValid()
+		return myId == runId
+	end
+
+	setFlag(AUTO_REJOIN) -- 重進後靠旗標接著跑
+	button.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+
+	task.spawn(function()
+		-- 等角色載入
+		local t0 = os.clock()
+		while stillValid() and not select(3, getChar()) and os.clock() - t0 < 20 do
+			task.wait(0.2)
+		end
+
+		-- 1. 生成 + 坐上
+		local seated = false
+		for attempt = 1, SPAWN_RETRIES do
+			if not stillValid() then
+				return
+			end
+			setStatus("生成車子 (" .. attempt .. ")，按我停止")
+			seated = spawnAndSit(stillValid)
+			if seated then
+				break
+			end
+			task.wait(1)
+		end
+		if not stillValid() then
+			return
+		end
+		if not seated then
+			stopAll("生成或坐上車子失敗")
+			return
+		end
+		task.wait(0.5)
+
+		-- 2. 檢查點
+		local checkers = collectCheckers()
+		for n = FIRST, LAST do
+			if not stillValid() then
+				return
+			end
+
+			local _, humanoid = getChar()
+			if not (humanoid and humanoid.SeatPart) then
+				stopAll("走到 Point " .. n .. " 前已經不在車上")
+				return
+			end
+
+			setStatus("檢查點 " .. n .. " / " .. LAST .. "，按我停止")
+			local checker = checkers[n]
+			if checker then
+				local ok = passThroughDoor(checker, stillValid)
+				print("[CartAuto] Point", n, ok and "已通過" or "失敗/跳過")
+			else
+				warn("[CartAuto] 找不到 Point = " .. n .. " 的 CartChecker")
+			end
+			task.wait(DELAY)
+		end
+		if not stillValid() then
+			return
+		end
+
+		-- 3. 重進
+		task.wait(FINISH_WAIT)
+		if not stillValid() then
+			return
+		end
+		if AUTO_REJOIN then
+			doRejoin()
+		else
+			stopAll()
+		end
+	end)
 end
 
 button.MouseButton1Click:Connect(function()
 	if running then
-		runId += 1
-		setIdle()
-		return
-	end
-
-	running = true
-	runId += 1
-	local myId = runId
-	button.Text = "停止"
-	button.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-
-	local checkers = collectCheckers()
-
-	for n = FIRST, LAST do
-		if myId ~= runId then
-			return
-		end
-
-		local checker = checkers[n]
-		if checker then
-			local ok = teleportAndTouch(checker)
-			print("[CartTouchTest] Point", n, ok and "已傳送並送出碰到" or "失敗/跳過")
-		else
-			warn("[CartTouchTest] 找不到 Point = " .. n .. " 的 CartChecker")
-		end
-
-		task.wait(DELAY)
-	end
-
-	if myId == runId then
-		setIdle()
+		stopAll("手動停止")
+	else
+		startAll()
 	end
 end)
+
+-- 重進後：旗標還在就自動開始
+if flagOn() then
+	setStatus("自動化接續中...")
+	task.delay(AUTO_START_DELAY, function()
+		if flagOn() and not running then
+			startAll()
+		end
+	end)
+end

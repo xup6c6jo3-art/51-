@@ -1,18 +1,28 @@
 -- LocalScript
 -- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
--- 按「開啟」後，依序傳送到 CartChecker 的 Point = 0 ~ 6，每個停 0.1 秒
+-- 按「開啟」後，依序處理 CartChecker 的 Point = 0 ~ 6。
+-- 不是直接傳到門中間，而是從 HitBox 外面一路「滑過」Closedoor，
+-- 讓伺服器看到你是「進入 → 穿過」，而不是瞬間出現在裡面。
 
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 -- ====== 設定 ======
-local FIRST = 0            -- 起始編號
-local LAST = 6             -- 結束編號（共 7 個檢查點：0~6）
-local DELAY = 0.5          -- 每個檢查點停留秒數
-local HEIGHT_OFFSET = 0    -- 傳送時比目標高多少 studs，避免卡進地板
+local FIRST = 0
+local LAST = 6
+local DELAY = 0.3          -- 每個檢查點通過後停留秒數
+local HEIGHT_OFFSET = 0    -- 比門高多少 studs（卡進地板就調大，載具掉太多就調小/負數）
+
+local APPROACH_PAD = 4     -- 起點比 HitBox 外緣再退多少 studs（要在外面才算「進入」）
+local STEP = 4             -- 每一步前進多少 studs
+local STEP_WAIT = 0.03     -- 每一步間隔秒數
+local FIRST_WAIT = 0.1     -- 傳到起點後多等一下，讓伺服器先看到你在外面
+local HOLD_AT_DOOR = 0.1   -- 走到門正中間時停留秒數
+local OVERSHOOT = 3        -- 穿過門後再多走多少 studs
+local REVERSE = false      -- 方向反了（變成從門後面穿過去）就改成 true
 -- ==================
 
--- 建立 UI
+-- UI
 local gui = Instance.new("ScreenGui")
 gui.Name = "CartTeleportUI"
 gui.ResetOnSpawn = false
@@ -32,27 +42,53 @@ local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = button
 
--- 找出所有 CartChecker，用 Point.Value 當編號
+-- 讀 Point（NumberValue / IntValue 都可以）
+local function readPoint(checker)
+	local p = checker:FindFirstChild("Point")
+	if p and p:IsA("ValueBase") and type(p.Value) == "number" then
+		return p.Value
+	end
+	return nil
+end
+
 local function collectCheckers()
-	local list = {}
+	local list, count = {}, 0
 	for _, inst in ipairs(workspace:GetDescendants()) do
-		if inst.Name == "CartChecker" and inst:IsA("Model") then
-			local point = inst:FindFirstChild("Point")
-			if point and point:IsA("NumberValue") then
-				list[point.Value] = inst
+		if inst.Name == "CartChecker" then
+			local n = readPoint(inst)
+			if n then
+				list[n] = inst
+				count += 1
 			end
 		end
 	end
+	print("[CartTeleport] 找到 CartChecker：", count)
 	return list
 end
 
--- 找出玩家坐著的載具（workspace 底下最外層的 Model），沒坐著就回傳 nil
+local function getCFrame(obj)
+	if obj:IsA("BasePart") then
+		return obj.CFrame
+	elseif obj:IsA("Model") then
+		return obj:GetPivot()
+	end
+	local part = obj:FindFirstChildWhichIsA("BasePart", true)
+	return part and part.CFrame or nil
+end
+
+-- 一個方塊沿著 dir 方向的「半長」
+local function halfExtentAlong(part, dir)
+	local cf, s = part.CFrame, part.Size
+	return math.abs(dir:Dot(cf.RightVector)) * s.X / 2
+		+ math.abs(dir:Dot(cf.UpVector)) * s.Y / 2
+		+ math.abs(dir:Dot(cf.LookVector)) * s.Z / 2
+end
+
 local function getVehicle(humanoid)
 	local seat = humanoid and humanoid.SeatPart
 	if not seat then
 		return nil
 	end
-
 	local top = seat:FindFirstAncestorOfClass("Model")
 	while top and top.Parent and top.Parent ~= workspace and top.Parent:IsA("Model") do
 		top = top.Parent
@@ -73,31 +109,98 @@ local function zeroVelocity(root)
 	end
 end
 
--- 傳送到某個檢查點底下的 Closedoor（沒有 Closedoor 就不傳）
--- 如果玩家坐在載具上，就連載具一起傳
-local function teleportTo(checker)
+-- 把玩家（或載具）移到指定 CFrame
+local function moveTo(cf)
 	local char = player.Character
 	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then
 		return false
 	end
+	local vehicle = getVehicle(humanoid)
+	if vehicle then
+		vehicle:PivotTo(cf)
+		zeroVelocity(vehicle)
+	else
+		char:PivotTo(cf)
+		zeroVelocity(char)
+	end
+	return true
+end
 
-	-- 一定要用 Closedoor，找不到就不傳（避免傳到錯的位置導致無法判定）
-	local target = checker:FindFirstChild("Closedoor")
-	if not target then
+-- 算出要經過的距離清單（相對門中心，沿軌道方向；正數 = 門前面，0 = 門正中間，負數 = 門後面）
+local function buildDistances(door, doorCF, axis, hitbox)
+	local doorHalf = door:IsA("BasePart") and halfExtentAlong(door, axis) or 3
+	local startDist
+
+	if hitbox and hitbox:IsA("BasePart") then
+		local along = math.abs((hitbox.Position - doorCF.Position):Dot(axis))
+		startDist = along + halfExtentAlong(hitbox, axis) + APPROACH_PAD
+	else
+		startDist = doorHalf + 30
+	end
+
+	local endDist = -(doorHalf + OVERSHOOT)
+	local ds = {}
+	local d = startDist
+	while d > endDist do
+		-- 確保一定有停在 0（門正中間）那一步
+		if d < 0 and #ds > 0 and ds[#ds] > 0 then
+			table.insert(ds, 0)
+		end
+		table.insert(ds, d)
+		d -= STEP
+	end
+	table.insert(ds, endDist)
+	return ds
+end
+
+-- 從門前面滑過 Closedoor
+local function passThroughDoor(checker, stillValid)
+	local door = checker:FindFirstChild("Closedoor", true)
+	if not door then
 		warn(checker:GetFullName() .. " 底下找不到 Closedoor，已跳過")
 		return false
 	end
-	local targetCF = target:GetPivot() + Vector3.new(0, HEIGHT_OFFSET, 0)
+	local doorCF = getCFrame(door)
+	if not doorCF then
+		warn(door:GetFullName() .. " 取不到位置")
+		return false
+	end
 
-	local vehicle = getVehicle(humanoid)
-	if vehicle then
-		vehicle:PivotTo(targetCF)
-		zeroVelocity(vehicle)
-	else
-		char:PivotTo(targetCF)
-		zeroVelocity(char)
+	local hitbox = checker:FindFirstChild("HitBox", true)
+
+	-- 軌道方向 = 門的 LookVector；方向（正負）由 HitBox 在門的哪一側決定
+	local axis = doorCF.LookVector
+	local sign = 1
+	if hitbox and hitbox:IsA("BasePart") then
+		sign = ((hitbox.Position - doorCF.Position):Dot(axis) >= 0) and 1 or -1
+	end
+	if REVERSE then
+		sign = -sign
+	end
+	local dir = axis * sign -- 從門指向「前面」（起點那一側）
+
+	local ds = buildDistances(door, doorCF, axis, hitbox)
+	local rotation = doorCF.Rotation
+	local doorPos = doorCF.Position + Vector3.new(0, HEIGHT_OFFSET, 0)
+
+	for i, dist in ipairs(ds) do
+		if not stillValid() then
+			return false
+		end
+		local cf = rotation + (doorPos + dir * dist)
+		if not moveTo(cf) then
+			return false
+		end
+
+		if i == 1 then
+			task.wait(FIRST_WAIT)
+		elseif dist == 0 then
+			task.wait(HOLD_AT_DOOR)
+		else
+			task.wait(STEP_WAIT)
+		end
 	end
 	return true
 end
@@ -105,13 +208,16 @@ end
 local running = false
 local runId = 0
 
+local function setIdle()
+	running = false
+	button.Text = "開啟"
+	button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+end
+
 button.MouseButton1Click:Connect(function()
-	-- 執行中再按一次 = 停止
 	if running then
-		running = false
 		runId += 1
-		button.Text = "開啟"
-		button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+		setIdle()
 		return
 	end
 
@@ -121,26 +227,29 @@ button.MouseButton1Click:Connect(function()
 	button.Text = "停止"
 	button.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
 
+	local function stillValid()
+		return myId == runId
+	end
+
 	local checkers = collectCheckers()
 
 	for n = FIRST, LAST do
-		if myId ~= runId then
-			return -- 被中途停止或重新開始
+		if not stillValid() then
+			return
 		end
 
 		local checker = checkers[n]
 		if checker then
-			teleportTo(checker)
+			local ok = passThroughDoor(checker, stillValid)
+			print("[CartTeleport] Point", n, ok and "已通過" or "失敗/跳過")
 		else
-			warn("找不到 Point = " .. n .. " 的 CartChecker")
+			warn("[CartTeleport] 找不到 Point = " .. n .. " 的 CartChecker")
 		end
 
 		task.wait(DELAY)
 	end
 
-	if myId == runId then
-		running = false
-		button.Text = "開啟"
-		button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+	if stillValid() then
+		setIdle()
 	end
 end)

@@ -53,6 +53,15 @@ local _fireprox = fireproximityprompt
 local _firetouch = firetouchinterest
 local _writefile, _isfile, _delfile = writefile, isfile, delfile
 
+-- 重進後自動再執行本腳本：載入器會先設定 getgenv().CartAutoAll_URL
+-- 這裡用同一個網址排好「傳送後再載入一次」（不需要 autoexec，也不需要存檔）
+local _url = getgenv and getgenv().CartAutoAll_URL
+if queue_on_teleport and _url then
+	queue_on_teleport(
+		'getgenv().CartAutoAll_URL="' .. _url .. '" loadstring(game:HttpGet("' .. _url .. '"))()'
+	)
+end
+
 -- ========== UI ==========
 local old = player:WaitForChild("PlayerGui"):FindFirstChild("CartAutoAllUI")
 if old then

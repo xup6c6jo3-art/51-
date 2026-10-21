@@ -1,8 +1,6 @@
--- LocalScript
+-- LocalScript（測試用：傳送過去 + 用 firetouchinterest 送出「碰到了」）
+-- 需要執行器支援 firetouchinterest，一般 Studio 的 LocalScript 沒有這個函式
 -- 放在 StarterPlayer > StarterPlayerScripts（或 StarterGui）
--- 按「開啟」後，依序處理 CartChecker 的 Point = 0 ~ 6。
--- 不是直接傳到門中間，而是從 HitBox 外面一路「滑過」Closedoor，
--- 讓伺服器看到你是「進入 → 穿過」，而不是瞬間出現在裡面。
 
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
@@ -10,39 +8,37 @@ local player = Players.LocalPlayer
 -- ====== 設定 ======
 local FIRST = 0
 local LAST = 6
-local DELAY = 0.3          -- 每個檢查點通過後停留秒數
-local HEIGHT_OFFSET = 0    -- 比門高多少 studs（卡進地板就調大，載具掉太多就調小/負數）
-
-local APPROACH_PAD = 4     -- 起點比 HitBox 外緣再退多少 studs（要在外面才算「進入」）
-local STEP = 4             -- 每一步前進多少 studs
-local STEP_WAIT = 0.03     -- 每一步間隔秒數
-local FIRST_WAIT = 0.1     -- 傳到起點後多等一下，讓伺服器先看到你在外面
-local HOLD_AT_DOOR = 0.1   -- 走到門正中間時停留秒數
-local OVERSHOOT = 3        -- 穿過門後再多走多少 studs
-local REVERSE = false      -- 方向反了（變成從門後面穿過去）就改成 true
+local DELAY = 0.5           -- 每個檢查點之間的秒數
+local HEIGHT_OFFSET = 0     -- 傳送時比門高多少 studs
+local TOUCH_DOOR = true     -- 對 Closedoor 送碰到
+local TOUCH_HITBOX = true   -- 對 HitBox 也送碰到（不確定伺服器看哪個，兩個都送）
+local TOUCH_WAIT = 0.05     -- 開始碰到 → 結束碰到 之間的秒數
 -- ==================
+
+if not firetouchinterest then
+	warn("[CartTouchTest] 這個環境沒有 firetouchinterest，只會傳送，不會送碰到")
+end
 
 -- UI
 local gui = Instance.new("ScreenGui")
-gui.Name = "CartTeleportUI"
+gui.Name = "CartTouchTestUI"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local button = Instance.new("TextButton")
 button.Size = UDim2.fromOffset(160, 50)
-button.Position = UDim2.new(0, 20, 0.5, -25)
-button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+button.Position = UDim2.new(0, 20, 0.5, 35)
+button.BackgroundColor3 = Color3.fromRGB(46, 120, 200)
 button.TextColor3 = Color3.new(1, 1, 1)
 button.Font = Enum.Font.SourceSansBold
-button.TextSize = 24
-button.Text = "開啟"
+button.TextSize = 22
+button.Text = "傳送+碰到"
 button.Parent = gui
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = button
 
--- 讀 Point（NumberValue / IntValue 都可以）
 local function readPoint(checker)
 	local p = checker:FindFirstChild("Point")
 	if p and p:IsA("ValueBase") and type(p.Value) == "number" then
@@ -52,17 +48,15 @@ local function readPoint(checker)
 end
 
 local function collectCheckers()
-	local list, count = {}, 0
+	local list = {}
 	for _, inst in ipairs(workspace:GetDescendants()) do
 		if inst.Name == "CartChecker" then
 			local n = readPoint(inst)
 			if n then
 				list[n] = inst
-				count += 1
 			end
 		end
 	end
-	print("[CartTeleport] 找到 CartChecker：", count)
 	return list
 end
 
@@ -74,14 +68,6 @@ local function getCFrame(obj)
 	end
 	local part = obj:FindFirstChildWhichIsA("BasePart", true)
 	return part and part.CFrame or nil
-end
-
--- 一個方塊沿著 dir 方向的「半長」
-local function halfExtentAlong(part, dir)
-	local cf, s = part.CFrame, part.Size
-	return math.abs(dir:Dot(cf.RightVector)) * s.X / 2
-		+ math.abs(dir:Dot(cf.UpVector)) * s.Y / 2
-		+ math.abs(dir:Dot(cf.LookVector)) * s.Z / 2
 end
 
 local function getVehicle(humanoid)
@@ -109,54 +95,37 @@ local function zeroVelocity(root)
 	end
 end
 
--- 把玩家（或載具）移到指定 CFrame
-local function moveTo(cf)
+-- 對 target 送出碰到：角色的 HumanoidRootPart 和座位（載具）都送
+local function touch(target)
+	if not firetouchinterest or not target or not target:IsA("BasePart") then
+		return
+	end
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local seat = humanoid and humanoid.SeatPart
+
+	for _, mine in ipairs({ root, seat }) do
+		if mine then
+			firetouchinterest(mine, target, 0) -- 開始碰到
+		end
+	end
+	task.wait(TOUCH_WAIT)
+	for _, mine in ipairs({ root, seat }) do
+		if mine then
+			firetouchinterest(mine, target, 1) -- 結束碰到
+		end
+	end
+end
+
+local function teleportAndTouch(checker)
 	local char = player.Character
 	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then
 		return false
 	end
-	local vehicle = getVehicle(humanoid)
-	if vehicle then
-		vehicle:PivotTo(cf)
-		zeroVelocity(vehicle)
-	else
-		char:PivotTo(cf)
-		zeroVelocity(char)
-	end
-	return true
-end
 
--- 算出要經過的距離清單（相對門中心，沿軌道方向；正數 = 門前面，0 = 門正中間，負數 = 門後面）
-local function buildDistances(door, doorCF, axis, hitbox)
-	local doorHalf = door:IsA("BasePart") and halfExtentAlong(door, axis) or 3
-	local startDist
-
-	if hitbox and hitbox:IsA("BasePart") then
-		local along = math.abs((hitbox.Position - doorCF.Position):Dot(axis))
-		startDist = along + halfExtentAlong(hitbox, axis) + APPROACH_PAD
-	else
-		startDist = doorHalf + 30
-	end
-
-	local endDist = -(doorHalf + OVERSHOOT)
-	local ds = {}
-	local d = startDist
-	while d > endDist do
-		-- 確保一定有停在 0（門正中間）那一步
-		if d < 0 and #ds > 0 and ds[#ds] > 0 then
-			table.insert(ds, 0)
-		end
-		table.insert(ds, d)
-		d -= STEP
-	end
-	table.insert(ds, endDist)
-	return ds
-end
-
--- 從門前面滑過 Closedoor
-local function passThroughDoor(checker, stillValid)
 	local door = checker:FindFirstChild("Closedoor", true)
 	if not door then
 		warn(checker:GetFullName() .. " 底下找不到 Closedoor，已跳過")
@@ -164,43 +133,26 @@ local function passThroughDoor(checker, stillValid)
 	end
 	local doorCF = getCFrame(door)
 	if not doorCF then
-		warn(door:GetFullName() .. " 取不到位置")
 		return false
 	end
+	local targetCF = doorCF + Vector3.new(0, HEIGHT_OFFSET, 0)
 
-	local hitbox = checker:FindFirstChild("HitBox", true)
-
-	-- 軌道方向 = 門的 LookVector；方向（正負）由 HitBox 在門的哪一側決定
-	local axis = doorCF.LookVector
-	local sign = 1
-	if hitbox and hitbox:IsA("BasePart") then
-		sign = ((hitbox.Position - doorCF.Position):Dot(axis) >= 0) and 1 or -1
+	local vehicle = getVehicle(humanoid)
+	if vehicle then
+		vehicle:PivotTo(targetCF)
+		zeroVelocity(vehicle)
+	else
+		char:PivotTo(targetCF)
+		zeroVelocity(char)
 	end
-	if REVERSE then
-		sign = -sign
+
+	task.wait(0.05) -- 讓位置先同步一下再送碰到
+
+	if TOUCH_DOOR then
+		touch(door)
 	end
-	local dir = axis * sign -- 從門指向「前面」（起點那一側）
-
-	local ds = buildDistances(door, doorCF, axis, hitbox)
-	local rotation = doorCF.Rotation
-	local doorPos = doorCF.Position + Vector3.new(0, HEIGHT_OFFSET, 0)
-
-	for i, dist in ipairs(ds) do
-		if not stillValid() then
-			return false
-		end
-		local cf = rotation + (doorPos + dir * dist)
-		if not moveTo(cf) then
-			return false
-		end
-
-		if i == 1 then
-			task.wait(FIRST_WAIT)
-		elseif dist == 0 then
-			task.wait(HOLD_AT_DOOR)
-		else
-			task.wait(STEP_WAIT)
-		end
+	if TOUCH_HITBOX then
+		touch(checker:FindFirstChild("HitBox", true))
 	end
 	return true
 end
@@ -210,8 +162,8 @@ local runId = 0
 
 local function setIdle()
 	running = false
-	button.Text = "開啟"
-	button.BackgroundColor3 = Color3.fromRGB(46, 160, 67)
+	button.Text = "傳送+碰到"
+	button.BackgroundColor3 = Color3.fromRGB(46, 120, 200)
 end
 
 button.MouseButton1Click:Connect(function()
@@ -227,29 +179,25 @@ button.MouseButton1Click:Connect(function()
 	button.Text = "停止"
 	button.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
 
-	local function stillValid()
-		return myId == runId
-	end
-
 	local checkers = collectCheckers()
 
 	for n = FIRST, LAST do
-		if not stillValid() then
+		if myId ~= runId then
 			return
 		end
 
 		local checker = checkers[n]
 		if checker then
-			local ok = passThroughDoor(checker, stillValid)
-			print("[CartTeleport] Point", n, ok and "已通過" or "失敗/跳過")
+			local ok = teleportAndTouch(checker)
+			print("[CartTouchTest] Point", n, ok and "已傳送並送出碰到" or "失敗/跳過")
 		else
-			warn("[CartTeleport] 找不到 Point = " .. n .. " 的 CartChecker")
+			warn("[CartTouchTest] 找不到 Point = " .. n .. " 的 CartChecker")
 		end
 
 		task.wait(DELAY)
 	end
 
-	if stillValid() then
+	if myId == runId then
 		setIdle()
 	end
 end)

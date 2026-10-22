@@ -2,6 +2,7 @@
 -- NPC  = 有 Humanoid 但「沒有」JumpingJack
 -- 玩家 = 有 JumpingJack
 -- 警長 = 有名叫 10993025871 的子物件（優先判斷）
+-- 顯示框改用 BillboardGui + UIStroke 方框（不使用 Highlight）
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -25,39 +26,49 @@ local settings = { Master = true, NPC = true, Player = true, Sheriff = true }
 -- 分類
 ------------------------------------------------------------
 local function classify(model)
-	-- 警長：有名叫 10993025871 的子物件（警長本身也有 JumpingJack，所以要先判斷）
 	if model:FindFirstChild(SHERIFF_MARK) then
 		return "Sheriff"
 	end
-	-- 玩家：有 JumpingJack
 	if model:FindFirstChild("JumpingJack") then
 		return "Player"
 	end
-	-- NPC：沒有 JumpingJack
 	return "NPC"
 end
 
 ------------------------------------------------------------
 -- ESP 物件
 ------------------------------------------------------------
-local tracked = {} -- [model] = {hl=, bb=, label=}
+local tracked = {} -- [model] = {box=, stroke=, bb=, label=}
 
 local function createESP(model)
 	if tracked[model] then return end
 	local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head") or model.PrimaryPart
 	if not hrp then return end
 
-	local hl = Instance.new("Highlight")
-	hl.Name = "ESP_HL"
-	hl.FillTransparency = 0.6
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Adornee = model
-	hl.Parent = model
+	-- 方框
+	local box = Instance.new("BillboardGui")
+	box.Name = "ESP_Box"
+	box.Size = UDim2.new(4, 0, 5.5, 0) -- 單位 studs，可自行調整框的大小
+	box.AlwaysOnTop = true
+	box.Adornee = hrp
+	box.Parent = model
 
+	local boxFrame = Instance.new("Frame")
+	boxFrame.BackgroundTransparency = 1
+	boxFrame.BorderSizePixel = 0
+	boxFrame.Size = UDim2.fromScale(1, 1)
+	boxFrame.Parent = box
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = boxFrame
+
+	-- 文字標籤
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "ESP_BB"
 	bb.Size = UDim2.fromOffset(160, 36)
-	bb.StudsOffset = Vector3.new(0, 3.5, 0)
+	bb.StudsOffset = Vector3.new(0, 4.5, 0)
 	bb.AlwaysOnTop = true
 	bb.Adornee = hrp
 	bb.Parent = model
@@ -70,13 +81,13 @@ local function createESP(model)
 	label.TextStrokeTransparency = 0.4
 	label.Parent = bb
 
-	tracked[model] = { hl = hl, bb = bb, label = label }
+	tracked[model] = { box = box, stroke = stroke, bb = bb, label = label }
 end
 
 local function removeESP(model)
 	local d = tracked[model]
 	if not d then return end
-	d.hl:Destroy()
+	d.box:Destroy()
 	d.bb:Destroy()
 	tracked[model] = nil
 end
@@ -97,17 +108,16 @@ workspace.DescendantAdded:Connect(tryTrack)
 task.spawn(function()
 	while true do
 		for model, d in pairs(tracked) do
-			if not model:IsDescendantOf(workspace) or not d.hl.Parent then
+			if not model:IsDescendantOf(workspace) or not d.box.Parent then
 				removeESP(model)
 			else
 				local cat = classify(model)
 				local show = settings.Master and settings[cat]
-				d.hl.Enabled = show
+				d.box.Enabled = show
 				d.bb.Enabled = show
 				if show then
 					local color = COLORS[cat]
-					d.hl.FillColor = color
-					d.hl.OutlineColor = color
+					d.stroke.Color = color
 					d.label.TextColor3 = color
 					local hum = model:FindFirstChildOfClass("Humanoid")
 					local hp = hum and math.floor(hum.Health) or 0
